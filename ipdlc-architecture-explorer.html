@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iPDLC — Live Architecture Explorer</title>
+<style>
+  :root{
+    --paper:#F6F8FB; --card:#FFFFFF; --ink:#0B1F3A; --ink-soft:#41546F;
+    --blue:#1856C9; --blue-deep:#0E3B8E; --green:#128A5C; --amber:#B36D00; --red:#C2403D;
+    --line:#D8E1EC; --line-soft:#E8EEF5;
+    --console:#0C1424; --console-line:#182741; --console-text:#B9C7DE;
+    --c-sql:#4E96FF; --c-kafka:#FF9F43; --c-redis:#FF6B8F; --c-http:#2BC48A; --c-sse:#28C7DE; --c-adk:#A97DF5; --c-sys:#7E93B4; --c-coin:#EFC24A;
+    --thread:#FFD166;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:var(--sans);background:var(--paper);color:var(--ink);font-size:14px;line-height:1.55}
+  button{font-family:inherit;cursor:pointer}
+  ::selection{background:#CFE0FF}
+
+  header{background:var(--ink);color:#EAF1FB;padding:13px 22px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;position:sticky;top:0;z-index:50;box-shadow:0 6px 18px rgba(11,31,58,.28)}
+  .brand{display:flex;align-items:baseline;gap:10px}
+  .brand .citi{font-weight:800;font-size:17px;color:#fff}
+  .brand .citi::after{content:"";display:inline-block;width:26px;height:2px;background:#E4413B;transform:translateY(-7px) rotate(-12deg);margin-left:-25px;border-radius:2px}
+  .brand .app{font-weight:600;font-size:12px;color:#9FB4D4;letter-spacing:.14em;text-transform:uppercase}
+  h1{font-size:15px;font-weight:700;color:#fff;margin-right:auto}
+  h1 small{display:block;font-size:11px;font-weight:400;color:#8AA1C4}
+  .corr-chip{font-family:var(--mono);font-size:11.5px;background:rgba(255,209,102,.10);border:1px solid rgba(255,209,102,.45);color:var(--thread);padding:6px 11px;border-radius:999px;display:flex;gap:8px;align-items:center;min-height:30px}
+  .corr-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--thread)}
+  .corr-chip.idle{opacity:.55;border-style:dashed}
+  .speed{display:flex;border:1px solid #33507E;border-radius:8px;overflow:hidden}
+  .speed button{background:transparent;border:0;color:#9FB4D4;font-size:11px;font-weight:700;padding:6px 10px}
+  .speed button[aria-pressed="true"]{background:var(--blue);color:#fff}
+
+  .frame{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:18px;padding:18px 22px;max-width:1780px;margin:0 auto}
+  @media(max-width:1200px){.frame{grid-template-columns:1fr}.console-pane{position:static;max-height:400px}}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(11,31,58,.05)}
+  .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--blue);margin-bottom:4px}
+
+  /* tabs */
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .tabs button{border:1px solid var(--line);background:#F1F5FA;border-radius:999px;padding:7px 14px;font-size:12.5px;font-weight:700;color:var(--ink-soft);display:flex;align-items:center;gap:7px}
+  .tabs button:hover{border-color:var(--blue);color:var(--blue)}
+  .tabs button[aria-current="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+  .zone{width:8px;height:8px;border-radius:2px}
+
+  /* live map */
+  .mapwrap{position:relative}
+  .mapwrap svg{width:100%;height:auto;display:block}
+  .n rect{fill:#fff;stroke:var(--line);stroke-width:1.2;rx:9}
+  .n text{font-family:var(--sans);fill:var(--ink)}
+  .n .nl{font-size:12.5px;font-weight:700}
+  .n .ns{font-size:9.5px;fill:var(--ink-soft)}
+  .n.zoneblock>rect{fill:#F4F7FC;stroke-dasharray:3 3}
+  .n .zl{font-size:9px;font-weight:800;letter-spacing:.14em;fill:#7288A8}
+  .chip rect{fill:#EEF3FA;stroke:#D3DEEC;stroke-width:1;rx:5}
+  .chip text{font-family:var(--mono);font-size:8.6px;fill:#3A517A}
+  .n.hot>rect{stroke:var(--blue);stroke-width:2;filter:drop-shadow(0 0 5px rgba(24,86,201,.45))}
+  .chip.hot rect{fill:#FFEFC9;stroke:var(--thread);stroke-width:1.4}
+  .chip.hot text{fill:#7A5A00;font-weight:700}
+  .n.gatehot>rect{stroke:var(--amber);stroke-width:2.2;filter:drop-shadow(0 0 6px rgba(179,109,0,.5))}
+  .tracepath{fill:none;stroke-width:1.6;opacity:.55}
+  .packet{filter:drop-shadow(0 0 4px currentColor)}
+
+  /* run controls + brief */
+  .runbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .btn{border:0;border-radius:9px;font-weight:700;font-size:13px;padding:9px 16px}
+  .btn.primary{background:var(--blue);color:#fff}
+  .btn.primary:hover{background:var(--blue-deep)}
+  .btn.primary:disabled{background:#A9BBD8;cursor:not-allowed}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--ink-soft)}
+  .btn.approve{background:var(--green);color:#fff}
+  .btn.reject{background:#fff;border:1px solid var(--red);color:var(--red)}
+  .runstate{font-size:12px;font-weight:600;color:var(--ink-soft)}
+  .brieftext{color:var(--ink-soft);font-size:12.5px;max-width:88ch;margin-top:6px}
+
+  /* step track */
+  .panel{display:none}.panel.active{display:block}
+  .track{list-style:none}
+  .step{position:relative;padding:9px 12px 10px 38px;border-radius:10px}
+  .step::before{content:"";position:absolute;left:18px;top:32px;bottom:-5px;width:2px;background:var(--line-soft)}
+  .step:last-child::before{display:none}
+  .step .node{position:absolute;left:10px;top:12px;width:16px;height:16px;border-radius:50%;border:2px solid var(--line);background:#fff;display:flex;align-items:center;justify-content:center;font-size:9px;color:#fff;font-weight:800}
+  .step .st{font-weight:700;font-size:13px}
+  .step .sd{font-size:11.8px;color:var(--ink-soft);margin-top:1px;max-width:80ch}
+  .step.pending{opacity:.5}
+  .step.active{background:#EEF4FE}
+  .step.active .node{border-color:var(--blue);background:var(--blue);box-shadow:0 0 0 4px rgba(24,86,201,.15)}
+  @media(prefers-reduced-motion:no-preference){.step.active .node{animation:pulse 1.1s ease infinite}}
+  @keyframes pulse{50%{box-shadow:0 0 0 7px rgba(24,86,201,.10)}}
+  .step.done .node{border-color:var(--green);background:var(--green)}
+  .step.done .node::after{content:"✓"}
+  .step.gate.active{background:#FFF7EA}
+  .step.gate.active .node{border-color:var(--amber);background:var(--amber);animation:none}
+  .step.gate .gate-actions{margin-top:8px;display:none;gap:8px}
+  .step.gate.active .gate-actions{display:flex}
+  .step.failed .node{border-color:var(--red);background:var(--red)}
+
+  /* console */
+  .console-pane{position:sticky;top:76px;align-self:start;background:var(--console);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;max-height:calc(100vh - 100px);box-shadow:0 10px 30px rgba(11,31,58,.25)}
+  .console-head{padding:11px 16px;border-bottom:1px solid var(--console-line);display:flex;align-items:center;gap:10px}
+  .console-head .lamp{width:8px;height:8px;border-radius:50%;background:#3FD68F}
+  .console-head .lamp.off{background:#42557A}
+  .console-head h4{color:#E6EEFA;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+  .console-head small{color:#6E84A8;font-size:11px;margin-left:auto;font-family:var(--mono)}
+  .wire{flex:1;overflow-y:auto;padding:12px 14px 16px;font-family:var(--mono);font-size:11.4px;line-height:1.75;color:var(--console-text)}
+  .wire .row{display:flex;gap:9px;animation:lg .18s ease}
+  @media(prefers-reduced-motion:reduce){.wire .row{animation:none}}
+  @keyframes lg{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+  .chan{flex:none;width:50px;text-align:right;font-weight:700;font-size:10px;padding-top:2px}
+  .chan.SQL{color:var(--c-sql)}.chan.KAFKA{color:var(--c-kafka)}.chan.REDIS{color:var(--c-redis)}
+  .chan.HTTP{color:var(--c-http)}.chan.SSE{color:var(--c-sse)}.chan.ADK{color:var(--c-adk)}.chan.SYS{color:var(--c-sys)}.chan.COIN{color:var(--c-coin)}
+  .wire .ok{color:#3FD68F}.wire .warn{color:#FFC46B}.wire .err{color:#FF8B7E}
+  .wire .cid{color:var(--thread);background:rgba(255,209,102,.08);border-radius:3px;padding:0 2px}
+  .wire .comment{color:#5C7196;font-style:italic}
+  .legend{display:flex;flex-wrap:wrap;gap:10px;padding:8px 16px;border-top:1px solid var(--console-line)}
+  .legend span{font-family:var(--mono);font-size:10px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="citi">citi&nbsp;&nbsp;</span><span class="app">iPDLC Platform</span></div>
+  <h1>Live Architecture Explorer<small>traces flow across the real topology — every packet keyed by one correlation identifier</small></h1>
+  <div class="corr-chip idle" id="corrChip"><span class="dot"></span><span id="corrText">correlation_id — minted when a simulation starts</span></div>
+  <div class="speed" role="group" aria-label="Simulation speed">
+    <button aria-pressed="true" data-speed="1">1×</button>
+    <button aria-pressed="false" data-speed="3">3×</button>
+  </div>
+</header>
+
+<div class="frame">
+  <main>
+    <div class="card">
+      <div class="tabs" id="tabs"></div>
+      <div class="runbar">
+        <button class="btn primary" id="runBtn">Run workflow</button>
+        <button class="btn ghost" id="resetBtn">Reset</button>
+        <span class="runstate" id="runState"></span>
+      </div>
+      <p class="brieftext" id="briefText"></p>
+    </div>
+
+    <div class="card mapwrap">
+      <div class="eyebrow">Live system map — watch the packets</div>
+      <svg id="map" viewBox="0 0 1060 640" role="img" aria-label="Live iPDLC topology with animated traces"></svg>
+    </div>
+
+    <div class="card" id="panels"></div>
+  </main>
+
+  <aside class="console-pane">
+    <div class="console-head"><span class="lamp off" id="lamp"></span><h4>Wire Log</h4><small id="wireCount">0 ops</small></div>
+    <div class="wire" id="wire" role="log" aria-live="polite"></div>
+    <div class="legend">
+      <span style="color:var(--c-sql)">SQL</span><span style="color:var(--c-kafka)">KAFKA</span>
+      <span style="color:var(--c-redis)">REDIS</span><span style="color:var(--c-http)">HTTP</span>
+      <span style="color:var(--c-sse)">SSE</span><span style="color:var(--c-adk)">ADK</span><span style="color:var(--c-coin)">COIN</span>
+    </div>
+  </aside>
+</div>
+<script>
+/* ================= topology ================= */
+const NODES = {
+  ui:      {x:40,  y:38,  w:190, h:52, l:'Browser · pdlc-ui', s:'Single Page Application'},
+  coin:    {x:864, y:38,  w:158, h:52, l:'COIN Identity',     s:'JWT · session cookie'},
+  cp:      {x:300, y:150, w:230, h:56, l:'Go Control Plane Service', s:'auth · runs · SSE hub'},
+  relay:   {x:596, y:150, w:160, h:56, l:'Outbox Relay',      s:'commit first, publish second'},
+  redis:   {x:864, y:150, w:158, h:56, l:'Redis Streams',     s:'stream:{corr_id}', chips:[{id:'stream',t:'stream:{corr}'}]},
+  pg:      {x:40,  y:268, w:310, h:168, l:'PostgreSQL', s:'state authority', zone:true,
+            chips:[{id:'runs',t:'runs'},{id:'outbox',t:'outbox'},{id:'shared_events',t:'shared_events'},
+                   {id:'hitl',t:'hitl_decisions'},{id:'agent_db',t:'<agent>_db.*'},{id:'memory',t:'memory·pgvector'}]},
+  kafka:   {x:404, y:280, w:352, h:140, l:'Apache Kafka', s:'key = correlation_id', zone:true,
+            chips:[{id:'t_neo',t:'jobs.neo'},{id:'t_arch',t:'jobs.arch'},{id:'t_smith',t:'jobs.smith'},
+                   {id:'t_tank',t:'jobs.tank'},{id:'t_morph',t:'jobs.morpheus'},{id:'t_ev',t:'events.delta'}]},
+  techrisk:{x:864, y:268, w:158, h:50, l:'Tech Risk Agent', s:'external team'},
+  jira:    {x:864, y:332, w:158, h:46, l:'JIRA', s:'epics · stories'},
+  github:  {x:864, y:392, w:158, h:46, l:'GitHub', s:'pull requests'},
+  neo:     {x:40,  y:492, w:140, h:52, l:'Agent Neo', s:'requirements'},
+  arch:    {x:196, y:492, w:150, h:52, l:'Architecture Agent', s:'design permit · NFR'},
+  smith:   {x:362, y:492, w:140, h:52, l:'Agent Smith', s:'UI/UX design'},
+  tank:    {x:518, y:492, w:150, h:52, l:'Product Wizard', s:'backlog'},
+  morpheus:{x:684, y:492, w:150, h:52, l:'Agent Morpheus', s:'code · PR'}
+};
+const NS='http://www.w3.org/2000/svg';
+const map=document.getElementById('map');
+function el(t,a){const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);return e}
+const traceLayer=el('g',{}); map.appendChild(traceLayer);
+const nodeLayer=el('g',{});  map.appendChild(nodeLayer);
+
+for(const [id,n] of Object.entries(NODES)){
+  const g=el('g',{class:'n'+(n.zone?' zoneblock':''),id:'node-'+id});
+  g.appendChild(el('rect',{x:n.x,y:n.y,width:n.w,height:n.h,rx:9}));
+  const lx=n.x+12;
+  const t1=el('text',{x:lx,y:n.y+20,class:'nl'}); t1.textContent=n.l; g.appendChild(t1);
+  const t2=el('text',{x:lx,y:n.y+34,class:'ns'}); t2.textContent=n.s; g.appendChild(t2);
+  if(n.chips){
+    n.chips.forEach((c,i)=>{
+      const cw=(n.w-24-8*2)/ (n.id==='redis'?1:3); // 3 per row (redis: 1)
+      const perRow = id==='redis' ? 1 : 3;
+      const w=(n.w-24-(perRow-1)*8)/perRow, h=20;
+      const cx=n.x+12+(i%perRow)*(w+8), cy=n.y+44+Math.floor(i/perRow)*(h+8);
+      const cg=el('g',{class:'chip',id:'chip-'+c.id});
+      cg.appendChild(el('rect',{x:cx,y:cy,width:w,height:h,rx:5}));
+      const ct=el('text',{x:cx+w/2,y:cy+13.5,'text-anchor':'middle'}); ct.textContent=c.t; cg.appendChild(ct);
+      g.appendChild(cg);
+    });
+  }
+  nodeLayer.appendChild(g);
+}
+const center=id=>{const n=NODES[id];return{x:n.x+n.w/2,y:n.y+n.h/2}};
+const CHANCOLOR={SQL:'#4E96FF',KAFKA:'#FF9F43',REDIS:'#FF6B8F',HTTP:'#2BC48A',SSE:'#28C7DE',ADK:'#A97DF5',SYS:'#7E93B4',COIN:'#EFC24A'};
+const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function flash(id,cls='hot',ms=900){const e=document.getElementById('node-'+id);if(!e)return;e.classList.add(cls);setTimeout(()=>e.classList.remove(cls),ms/speed)}
+function flashChip(id,ms=1100){const e=document.getElementById('chip-'+id);if(!e)return;e.classList.add('hot');setTimeout(()=>e.classList.remove('hot'),ms/speed)}
+
+function trace(from,to,color,dur){
+  return new Promise(res=>{
+    const a=center(from),b=center(to);
+    if(reduced||from===to){flash(from);flash(to);return setTimeout(res,120)}
+    const mx=(a.x+b.x)/2, curve=Math.abs(a.y-b.y)>30?` Q ${mx} ${a.y}, ${mx} ${(a.y+b.y)/2} T ${b.x} ${b.y}`:` L ${b.x} ${b.y}`;
+    const d=`M ${a.x} ${a.y}${curve}`;
+    const p=el('path',{d,class:'tracepath',stroke:color}); traceLayer.appendChild(p);
+    const dot=el('circle',{r:5,fill:color,class:'packet',style:`color:${color}`}); traceLayer.appendChild(dot);
+    const len=p.getTotalLength(), t0=performance.now(), D=dur/speed;
+    flash(from,'hot',500);
+    (function step(t){
+      const k=Math.min(1,(t-t0)/D), pt=p.getPointAtLength(len*k);
+      dot.setAttribute('cx',pt.x); dot.setAttribute('cy',pt.y);
+      if(k<1) requestAnimationFrame(step);
+      else{flash(to);p.style.transition='opacity .5s';p.style.opacity=0;dot.remove();setTimeout(()=>p.remove(),520);res()}
+    })(t0);
+  });
+}
+
+/* ================= run data ================= */
+const CIDGEN=()=>(crypto.randomUUID?crypto.randomUUID():'b0bcc68a-eb58-44c6-a0de-'+Math.random().toString(16).slice(2,14));
+let corr=null,speed=1,running=false,gateResolver=null;
+const short=id=>id?id.slice(0,8)+'…':'';
+const cid=()=>`<span class="cid">${short(corr)}</span>`;
+
+/* op: {c,from,to,tables?[],topic?,x} */
+const FLOWS={
+  coin:{zone:'#EFC24A',name:'COIN',brief:'Identity, proven once: COIN issues the JSON Web Token into a session cookie; the Control Plane Service verifies it locally on every request and authorizes against the run. Downstream, agents act under service identity — the human travels as recorded data.',
+    steps:[
+      {t:'Shell loads · session probe',d:'The Single Page Application boots and calls /me; the browser attaches the COIN cookie automatically.',
+        ops:[{c:'HTTP',from:'ui',to:'cp',x:()=>`GET /api/v1/me <span class="comment">-- cookie attached</span>`},
+             {c:'COIN',from:'cp',to:'coin',x:()=>`verify signature via cached JWKS <span class="ok">valid</span> · exp ok · aud ok`}]},
+      {t:'Expired-session branch',d:'On 401, full-page redirect to COIN with a return URL — never a silent retry loop.',
+        ops:[{c:'HTTP',from:'cp',to:'ui',x:()=>`<span class="warn">401</span> → redirect to COIN login`},
+             {c:'COIN',from:'ui',to:'coin',x:()=>`authenticate → cookie set → return <span class="ok">restored</span>`}]},
+      {t:'Claims + CSRF bootstrap',d:'Roles come from token claims; the CSRF token is fetched once and rides every write as a header.',
+        ops:[{c:'HTTP',from:'cp',to:'ui',x:()=>`200 /me → soeid np12345 · roles [pm, approver]`},
+             {c:'HTTP',from:'ui',to:'cp',x:()=>`GET /csrf → token in memory <span class="comment">-- never in a cookie</span>`}]},
+      {t:'Per-request verification forever',d:'Every later call re-verifies locally (microseconds) and authorizes the SOEID against the run row. Zero trust inside the boundary.',
+        ops:[{c:'COIN',from:'cp',to:'cp',x:()=>`local verify per request · authorize vs runs.user_id`},
+             {c:'SYS',from:'cp',to:'cp',x:()=>`<span class="comment">-- user tokens never enter Kafka: pipelines outlive tokens</span>`}]}
+    ]},
+  ui:{zone:'#28C7DE',name:'User Interface',brief:'A projection of server state: one snapshot seeds the reducer, ordered deltas mutate it, and refresh, reconnect, and failover are the same hydrate-then-apply path. Approvals are never optimistic; agent markdown is sanitized before render.',
+    steps:[
+      {t:'Hydrate from snapshot',d:'Sidebar and transcript render complete before any live traffic.',
+        ops:[{c:'HTTP',from:'ui',to:'cp',x:()=>`GET /runs/${short(corr)}`},
+             {c:'SQL',from:'cp',to:'pg',tables:['runs','shared_events'],x:()=>`read runs + step roll-up → RunSnapshot (last_event_id 8877-0)`},
+             {c:'HTTP',from:'cp',to:'ui',x:()=>`snapshot → runStore.seed() <span class="ok">rendered</span>`}]},
+      {t:'Stream opens · delta applies',d:'One EventSource per open run; the reducer applies in entry-id order.',
+        ops:[{c:'SSE',from:'ui',to:'cp',x:()=>`EventSource /runs/${short(corr)}/events · Last-Event-ID 8877-0`},
+             {c:'REDIS',from:'cp',to:'redis',tables:['stream'],x:()=>`XREAD BLOCK stream:${short(corr)} from 8877-0`},
+             {c:'SSE',from:'cp',to:'ui',x:()=>`id 1123-0 state_delta → reducer <span class="ok">applied</span>`}]},
+      {t:'Duplicate frame dropped',d:'At-least-once reaches the browser too; anything at or below the cursor is a no-op.',
+        ops:[{c:'SSE',from:'cp',to:'ui',x:()=>`id 1123-0 again → reducer: <span class="warn">dropped as duplicate</span>`}]},
+      {t:'Sanitized render',d:'LLM output is untrusted input: raw HTML off, DOMPurify, strict Content Security Policy.',
+        ops:[{c:'SYS',from:'ui',to:'ui',x:()=>`MarkdownRenderer → <span class="ok">inert render</span>`}]},
+      {t:'Reconnect after sleep',d:'EventSource retries with the last delivered id; unknown id → server sends a snapshot event, store re-seeds.',
+        ops:[{c:'SSE',from:'ui',to:'cp',x:()=>`reconnect · Last-Event-ID 1123-0 → <span class="ok">2 missed deltas replayed</span>`}]}
+    ]},
+  cp:{zone:'#4E96FF',name:'Control Plane',brief:'Stateless interpreter of the runs row: it mints runs, executes guarded transitions, and fans events to Server-Sent Events connections. It publishes nothing directly — every Kafka message begins as an outbox row committed with the state it announces.',
+    steps:[
+      {t:'Create run — one transaction',d:'runs row + first job outbox row, atomically; the correlation identifier is PostgreSQL-generated.',
+        ops:[{c:'HTTP',from:'ui',to:'cp',x:()=>`POST /runs + X-CSRF-Token`},
+             {c:'SQL',from:'cp',to:'pg',tables:['runs','outbox'],x:()=>`BEGIN · INSERT runs RETURNING ${cid()} · INSERT outbox(jobs.neo) · COMMIT <span class="ok">✓</span>`}]},
+      {t:'Relay publishes after commit',d:'Single active leader; order per run preserved.',
+        ops:[{c:'SQL',from:'relay',to:'pg',tables:['outbox'],x:()=>`SELECT outbox unpublished FOR UPDATE SKIP LOCKED`},
+             {c:'KAFKA',from:'relay',to:'kafka',tables:['t_neo'],x:()=>`produce jobs.neo key ${cid()} acks=all <span class="ok">✓</span>`}]},
+      {t:'Guarded transition',d:'UPDATE … WHERE status=expected AND version=seen. Zero rows means: lost the race, re-read.',
+        ops:[{c:'SQL',from:'cp',to:'pg',tables:['runs'],x:()=>`UPDATE runs paused_hitl→running WHERE version=3 → <span class="ok">1 row</span>`}]},
+      {t:'Event fan-out per data center',d:'gateway-gtd and gateway-swd both consume every event into their local Redis — whichever center holds the browser has the stream.',
+        ops:[{c:'KAFKA',from:'kafka',to:'cp',tables:['t_ev'],x:()=>`consume events.state_delta key ${cid()}`},
+             {c:'REDIS',from:'cp',to:'redis',tables:['stream'],x:()=>`XADD stream:${short(corr)} → 1123-0`},
+             {c:'SSE',from:'cp',to:'ui',x:()=>`frame id 1123-0 → browser <span class="ok">delivered</span>`}]}
+    ]},
+  data:{zone:'#A97DF5',name:'Data Plane',brief:'Agents are Kafka consumers running the Google Agent Development Kit in-process — no HTTP server exists on the data plane. Claim idempotently, run sub-agents, commit result and next dispatch in one transaction, acknowledge last.',
+    steps:[
+      {t:'Consume + claim',d:'The unique constraint on (corr_id, step, attempt) is the idempotency guard.',
+        ops:[{c:'KAFKA',from:'kafka',to:'neo',tables:['t_neo'],x:()=>`poll jobs.neo key ${cid()} attempt 1`},
+             {c:'SQL',from:'neo',to:'pg',tables:['agent_db'],x:()=>`INSERT neo_db.sessions ON CONFLICT DO NOTHING → <span class="ok">claimed</span>`}]},
+      {t:'Runner + sub-agents',d:'Market, regulatory, risk, report, Judge and Jury — each event persists with an outbox row so the interface streams.',
+        ops:[{c:'ADK',from:'neo',to:'neo',x:()=>`market_analyzer <span class="ok">done</span> · regulatory: UDAAP · Dodd-Frank · Reg E`},
+             {c:'SQL',from:'neo',to:'pg',tables:['agent_db','outbox'],x:()=>`session_events + outbox(state_delta) · COMMIT`},
+             {c:'ADK',from:'neo',to:'neo',x:()=>`judge_and_jury → score 86 <span class="ok">pass</span>`}]},
+      {t:'Commit result · raise gate · ack',d:'Report + paused_hitl + delta in one transaction, then the offset. The pause is a row, never a held message.',
+        ops:[{c:'SQL',from:'neo',to:'pg',tables:['shared_events','runs','outbox'],x:()=>`shared_events + status paused_hitl + outbox(hitl_required) · COMMIT <span class="ok">✓</span>`},
+             {c:'KAFKA',from:'neo',to:'kafka',tables:['t_neo'],x:()=>`commit offset <span class="comment">-- 3-day pause costs nothing</span>`}]},
+      {t:'Redelivery drill',d:'Worker killed after commit, before offset: redelivery hits the claim conflict and becomes a no-op.',
+        ops:[{c:'SYS',from:'neo',to:'neo',x:()=>`<span class="err">worker killed</span> pre-offset`},
+             {c:'KAFKA',from:'kafka',to:'neo',tables:['t_neo'],x:()=>`rebalance → redeliver key ${cid()}`},
+             {c:'SQL',from:'neo',to:'pg',tables:['agent_db'],x:()=>`claim → <span class="warn">conflict — already ran</span> · ack <span class="ok">✓</span>`}]}
+    ]},
+  context:{zone:'#2BC48A',name:'Context Graph',brief:'Per run, shared_events is the truth every agent reads; across runs, the memory store turns human verdicts into precedent. The distiller writes memory — agents never do — and retrieval is entitlement-filtered, injected as data, never instructions.',
+    steps:[
+      {t:'Handoff read',d:'The next agent reads committed rows — present by construction, thanks to the outbox ordering.',
+        ops:[{c:'SQL',from:'arch',to:'pg',tables:['shared_events'],x:()=>`SELECT shared_events WHERE ${cid()} AND agent='neo' → findings <span class="ok">present</span>`}]},
+      {t:'Human decision recorded',d:'Who, which gate, verdict, comment — the seed of institutional memory.',
+        ops:[{c:'SQL',from:'cp',to:'pg',tables:['hitl'],x:()=>`INSERT hitl_decisions (approved, "watch Reg E disclosures")`}]},
+      {t:'Distiller wakes on completion',d:'One curated record per run; decision and rationale come from human rows.',
+        ops:[{c:'KAFKA',from:'kafka',to:'neo',tables:['t_ev'],x:()=>`pipeline_complete → distiller job`},
+             {c:'ADK',from:'neo',to:'neo',x:()=>`distill: intent + tags [payments, autopay] + embed(768)`},
+             {c:'SQL',from:'neo',to:'pg',tables:['memory'],x:()=>`INSERT memory (source ${cid()}, human_verdict, entitlement consumer-lending)`}]},
+      {t:'Next run retrieves precedent',d:'Top-3 similar decisions, entitlement-filtered, cited in the new report.',
+        ops:[{c:'SQL',from:'neo',to:'pg',tables:['memory'],x:()=>`ORDER BY embedding <-> query LIMIT 3 WHERE entitlement IN (scopes)`},
+             {c:'ADK',from:'neo',to:'neo',x:()=>`prompt ← "prior initiatives (reference data)" <span class="ok">precedent cited</span>`}]}
+    ]},
+  pipeline:{zone:'#FF9F43',name:'Full Pipeline',brief:'Idea to reviewable pull request across every layer. The human gate waits for you — approve and watch the guarded transition; reject and the run goes terminal. Every packet on the map carries the same correlation identifier.',
+    steps:[
+      {t:'Submit — run minted',d:'"Native Mobile PIL Autopay."',
+        ops:[{c:'HTTP',from:'ui',to:'cp',x:()=>`POST /runs + X-CSRF-Token`},
+             {c:'SQL',from:'cp',to:'pg',tables:['runs','outbox'],x:()=>`INSERT runs RETURNING ${cid()} · outbox(jobs.neo) · COMMIT`},
+             {c:'KAFKA',from:'relay',to:'kafka',tables:['t_neo'],x:()=>`relay → produce jobs.neo <span class="ok">✓</span>`},
+             {c:'SSE',from:'cp',to:'ui',x:()=>`stream open for ${cid()}`}]},
+      {t:'Agent Neo',d:'Requirements, risk, Judge and Jury — deltas ticking the browser live.',
+        ops:[{c:'KAFKA',from:'kafka',to:'neo',tables:['t_neo'],x:()=>`consume · claim <span class="ok">✓</span>`},
+             {c:'ADK',from:'neo',to:'neo',x:()=>`sub-agents · jury 86 <span class="ok">pass</span>`},
+             {c:'SQL',from:'neo',to:'pg',tables:['shared_events','runs','outbox'],x:()=>`report + paused_hitl + outbox · COMMIT`},
+             {c:'KAFKA',from:'relay',to:'kafka',tables:['t_ev'],x:()=>`events.state_delta published`},
+             {c:'SSE',from:'cp',to:'ui',x:()=>`hitl_required → gate rendered <span class="warn">waiting…</span>`}]},
+      {t:'Human gate — your call',d:'The run is a paused row in PostgreSQL. Approve or reject below.',gate:true,ops:[]},
+      {t:'Architecture Agent',d:'Reads committed findings; calls Tech Risk through the gateway with a timeout and a degraded mode.',
+        ops:[{c:'KAFKA',from:'kafka',to:'arch',tables:['t_arch'],x:()=>`consume jobs.architecture · claim <span class="ok">✓</span>`},
+             {c:'SQL',from:'arch',to:'pg',tables:['shared_events'],x:()=>`read Neo findings`},
+             {c:'HTTP',from:'arch',to:'techrisk',x:()=>`external gateway → tech risk (30s budget) <span class="ok">target state</span>`},
+             {c:'SQL',from:'arch',to:'pg',tables:['shared_events','outbox'],x:()=>`design permit + NFRs · outbox(jobs.smith)`}]},
+      {t:'Agent Smith',d:'Accessibility-evaluated design.',
+        ops:[{c:'KAFKA',from:'kafka',to:'smith',tables:['t_smith'],x:()=>`consume · claim`},
+             {c:'ADK',from:'smith',to:'smith',x:()=>`RISE loop 84 <span class="ok">pass</span>`},
+             {c:'SQL',from:'smith',to:'pg',tables:['shared_events','outbox'],x:()=>`design → shared_events · outbox(jobs.tank)`}]},
+      {t:'Product Wizard',d:'Epics committed to shared context before the next dispatch exists.',
+        ops:[{c:'KAFKA',from:'kafka',to:'tank',tables:['t_tank'],x:()=>`consume · claim`},
+             {c:'HTTP',from:'tank',to:'jira',x:()=>`create EP-101, EP-102 <span class="ok">✓</span>`},
+             {c:'SQL',from:'tank',to:'pg',tables:['shared_events','outbox'],x:()=>`epic ids → shared_events · outbox(jobs.morpheus)`}]},
+      {t:'Agent Morpheus',d:'Reads epic ids from committed context; PR guarded against duplicates at GitHub itself.',
+        ops:[{c:'KAFKA',from:'kafka',to:'morpheus',tables:['t_morph'],x:()=>`consume · claim`},
+             {c:'SQL',from:'morpheus',to:'pg',tables:['shared_events'],x:()=>`read epic ids for ${cid()}`},
+             {c:'HTTP',from:'morpheus',to:'github',x:()=>`branch exists? no → PR #447 <span class="ok">opened</span>`},
+             {c:'SQL',from:'morpheus',to:'pg',tables:['runs'],x:()=>`status complete · COMMIT`}]},
+      {t:'Delivered',d:'Terminal frame; stream expires; the distiller mints this run\u2019s memory.',
+        ops:[{c:'KAFKA',from:'relay',to:'kafka',tables:['t_ev'],x:()=>`pipeline_complete published`},
+             {c:'SSE',from:'cp',to:'ui',x:()=>`PR url rendered <span class="ok">done</span>`},
+             {c:'REDIS',from:'cp',to:'redis',tables:['stream'],x:()=>`EXPIRE stream:${short(corr)} 86400`}]}
+    ]}
+};
+
+/* ================= UI wiring ================= */
+const tabs=document.getElementById('tabs'),panels=document.getElementById('panels');
+const wireEl=document.getElementById('wire'),lampEl=document.getElementById('lamp'),wireCount=document.getElementById('wireCount');
+const runBtn=document.getElementById('runBtn'),resetBtn=document.getElementById('resetBtn'),runState=document.getElementById('runState'),briefText=document.getElementById('briefText');
+let current='pipeline',opsN=0;
+
+Object.entries(FLOWS).forEach(([k,f])=>{
+  const b=document.createElement('button');
+  b.innerHTML=`<span class="zone" style="background:${f.zone}"></span>${f.name}`;
+  b.dataset.key=k;b.onclick=()=>select(k);tabs.appendChild(b);
+  const p=document.createElement('div');p.className='panel';p.id='panel-'+k;
+  p.innerHTML=`<ol class="track">${f.steps.map((s,i)=>`
+    <li class="step pending ${s.gate?'gate':''}" id="s-${k}-${i}"><span class="node"></span>
+      <div class="st">${s.t}</div><div class="sd">${s.d}</div>
+      ${s.gate?`<div class="gate-actions">
+        <button class="btn approve" id="gateApprove">Approve with comment</button>
+        <button class="btn reject" id="gateReject">Reject</button></div>`:''}
+    </li>`).join('')}</ol>`;
+  panels.appendChild(p);
+});
+function select(k){current=k;briefText.textContent=FLOWS[k].brief;
+  tabs.querySelectorAll('button').forEach(b=>b.setAttribute('aria-current',b.dataset.key===k));
+  panels.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+k));}
+select('pipeline');
+
+document.querySelector('.speed').addEventListener('click',e=>{
+  const b=e.target.closest('button[data-speed]');if(!b)return;speed=+b.dataset.speed;
+  document.querySelectorAll('.speed button').forEach(x=>x.setAttribute('aria-pressed',x===b));});
+
+function log(chan,html){opsN++;wireCount.textContent=opsN+' ops';
+  const r=document.createElement('div');r.className='row';
+  r.innerHTML=`<span class="chan ${chan}">${chan}</span><span>${html}</span>`;
+  wireEl.appendChild(r);wireEl.scrollTop=wireEl.scrollHeight;}
+const sysNote=t=>log('SYS',`<span class="comment">${t}</span>`);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms/speed));
+
+async function doOp(o){
+  await trace(o.from,o.to,CHANCOLOR[o.c]||'#888',700);
+  (o.tables||[]).forEach(flashChip);
+  log(o.c,o.x());
+  await sleep(220);
+}
+
+resetBtn.onclick=()=>reset(current);
+function reset(k){FLOWS[k].steps.forEach((s,i)=>{const e=document.getElementById(`s-${k}-${i}`);
+  e.className='step pending '+(s.gate?'gate':'');e.style.opacity='';});runState.textContent='';}
+
+runBtn.onclick=()=>simulate(current);
+panels.addEventListener('click',e=>{
+  if(e.target.id==='gateApprove'&&gateResolver)gateResolver('approve');
+  if(e.target.id==='gateReject'&&gateResolver)gateResolver('reject');});
+
+async function simulate(k){
+  if(running)return;running=true;reset(k);runBtn.disabled=true;lampEl.classList.remove('off');
+  corr=CIDGEN();
+  document.getElementById('corrChip').classList.remove('idle');
+  document.getElementById('corrText').textContent=corr;
+  sysNote(`— ${FLOWS[k].name} workflow · correlation_id ${short(corr)} —`);
+  const steps=FLOWS[k].steps;
+  for(let i=0;i<steps.length;i++){
+    const s=steps[i],elS=document.getElementById(`s-${k}-${i}`);
+    elS.classList.remove('pending');elS.classList.add('active');
+    elS.scrollIntoView({block:'nearest',behavior:'smooth'});
+    runState.textContent=`Step ${i+1}/${steps.length} — ${s.t}`;
+    for(const o of s.ops)await doOp(o);
+    if(s.gate){
+      runState.textContent='Paused at the human gate — the run is a row in PostgreSQL, waiting for you.';
+      flash('ui','gatehot',999999);const uiN=document.getElementById('node-ui');
+      const verdict=await new Promise(res=>{gateResolver=res});gateResolver=null;uiN.classList.remove('gatehot');
+      if(verdict==='approve'){
+        await doOp({c:'HTTP',from:'ui',to:'cp',x:()=>`POST /runs/${short(corr)}/approvals + X-CSRF-Token`});
+        await doOp({c:'SQL',from:'cp',to:'pg',tables:['runs','hitl','outbox'],x:()=>`guarded paused_hitl→running <span class="ok">1 row</span> · hitl_decisions(approved) · outbox(jobs.architecture) · COMMIT`});
+        await doOp({c:'SSE',from:'cp',to:'ui',x:()=>`hitl_decided → chip flips <span class="ok">Approved</span> <span class="comment">-- never optimistic</span>`});
+      }else{
+        await doOp({c:'HTTP',from:'ui',to:'cp',x:()=>`POST reject + required comment`});
+        await doOp({c:'SQL',from:'cp',to:'pg',tables:['runs','hitl'],x:()=>`guarded → '<span class="err">failed</span>' · hitl_decisions(rejected) · COMMIT`});
+        await doOp({c:'SSE',from:'cp',to:'ui',x:()=>`run_failed → terminal banner`});
+        elS.classList.remove('active');elS.classList.add('done');
+        for(let j=i+1;j<steps.length;j++){const n=document.getElementById(`s-${k}-${j}`);n.classList.remove('pending');n.classList.add('failed');n.style.opacity=.45;}
+        runState.textContent='Rejected at the gate — run terminal. Reset to try again.';return finish();
+      }
+    }
+    elS.classList.remove('active');elS.classList.add('done');
+  }
+  runState.textContent='Complete — every packet on the map carried the same correlation identifier.';
+  sysNote(`— complete · ${short(corr)} · ${opsN} logged operations —`);
+  finish();
+}
+function finish(){running=false;runBtn.disabled=false;lampEl.classList.add('off')}
+</script>
+</body>
+</html>
