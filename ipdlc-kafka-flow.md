@@ -205,3 +205,62 @@ Total Kafka traffic for the run: 5 job messages, roughly 25–40 state deltas, a
 ## 9. Operations
 
 Watch three numbers: **consumer lag per group** (KEDA's scaling input; alert on sustained growth), **outbox unpublished depth** (alert if it exceeds one poll budget — means the relay is down or Kafka is unreachable), and **DLQ arrivals** (every message is a run that failed permanently; page on it). Trace every produce and consume with the correlation_id as an OpenTelemetry attribute so one trace shows the whole run across both data centers.
+
+---
+
+## 10. The Outbox Relay — deep dive
+
+### 10.1 The problem it exists to solve (the dual-write problem)
+
+An agent finishing a step must do two things: commit results to PostgreSQL and announce them on Kafka — two systems, no shared transaction. Both orderings fail: write-then-publish can crash after the commit (committed data nobody was told about — a silently stalled pipeline); publish-then-write can crash after the publish (downstream told about data that does not exist — the handoff race). The outbox pattern removes the dilemma by making the announcement itself a database row, committed atomically with the state it announces. The relay's entire job is moving those rows to Kafka afterwards. Correctness lives in the transaction; the relay only needs to be *at-least-once* — which is why every consumer is idempotent.
+
+### 10.2 Component view
+
+```mermaid
+flowchart LR
+  subgraph RELAY["Outbox Relay — one small Go process, single active leader"]
+    LEASE["Leader election<br/>Kubernetes lease — standby in the other data center"]
+    POLL["Poller<br/>every 100–250 ms — batch 100"]
+    PROD["Kafka producer<br/>acks all · idempotence on"]
+    MARK["Marker<br/>set published_at after acks"]
+    MET["Metrics<br/>unpublished depth · publish lag · leader status"]
+  end
+  PG[("PostgreSQL<br/>agent_context.outbox")]
+  KF[("Kafka")]
+  LEASE --> POLL
+  POLL -- "SELECT unpublished ORDER BY id<br/>FOR UPDATE SKIP LOCKED" --> PG
+  POLL --> PROD --> KF
+  PROD --> MARK --> PG
+  POLL --> MET
+```
+
+Single-active leadership is what preserves per-run publish order (two concurrent relays could race rows 100 and 101 of the same run onto the broker out of order). The standby in the second data center takes over on lease expiry — seconds of publish delay, zero data loss, because unpublished rows simply wait.
+
+### 10.3 Sequence — normal loop and the crash that proves the design
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant RL as Relay (leader)
+  participant PG as PostgreSQL
+  participant KF as Kafka
+  participant W as Consumer (any agent / gateway)
+
+  loop every 100–250 ms
+    RL->>PG: BEGIN · SELECT outbox WHERE published_at IS NULL ORDER BY id LIMIT 100 FOR UPDATE SKIP LOCKED
+    RL->>KF: produce each (key correlation_id, acks all)
+    KF-->>RL: acknowledged by in-sync replicas
+    RL->>PG: UPDATE published_at = NOW() · COMMIT
+  end
+  Note over RL,KF: crash window — produced to Kafka, died before marking published
+  RL->>PG: (restart or standby takeover) SELECT — the same row is still unpublished
+  RL->>KF: produce again — duplicate on the topic
+  KF->>W: both deliveries arrive
+  W->>W: idempotent claim — second delivery is a no-op
+```
+
+That crash window is the whole at-least-once story in one picture: a re-publish is possible, harmless, and absorbed by the consumers' claim guard — never by cleverness in the relay.
+
+### 10.4 Operational facts
+
+Size: ~200 lines of Go; throughput ceiling thousands of messages per second — three orders of magnitude above need, so it never becomes the bottleneck. The two numbers to watch: **unpublished depth** (rows waiting — a growing depth means Kafka is unreachable or the leader is down; the backlog drains on recovery with no loss) and **publish lag** (row created_at → published_at, normally under one poll interval). Alternative implementation: Debezium change-data-capture on the outbox table replaces the poller if the Kafka platform team operates Connect — same semantics, someone else's process; take it only if they run it for you.
