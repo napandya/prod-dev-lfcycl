@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Context Graph — an iPDLC briefing</title>
+<style>
+  :root{
+    --paper:#FBFCFE; --ink:#0A1D38; --muted:#5A6E8C; --rule:#E3E9F1;
+    --blue:#1856C9; --gold:#C8951F; --gold-soft:#F6EBD2; --card:#FFFFFF;
+    --serif:Palatino,"Palatino Linotype","Book Antiqua",Georgia,serif;
+    --sans:-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--paper);color:var(--ink);font-family:var(--sans);font-size:15px;line-height:1.65}
+  button{font-family:inherit;cursor:pointer;background:none;border:0;color:inherit}
+  :focus-visible{outline:2px solid var(--blue);outline-offset:3px;border-radius:3px}
+  ::selection{background:var(--gold-soft)}
+
+  .sheet{max-width:920px;margin:0 auto;padding:0 28px}
+
+  /* masthead */
+  .mast{display:flex;justify-content:space-between;align-items:baseline;padding:26px 0 18px;border-bottom:2px solid var(--ink)}
+  .mast .who{font-weight:800;font-size:14px;letter-spacing:.02em}
+  .mast .who i{font-style:normal;color:var(--blue)}
+  .mast .what{font-size:11px;color:var(--muted);letter-spacing:.18em;text-transform:uppercase}
+
+  /* hero thesis */
+  .hero{padding:72px 0 56px;border-bottom:1px solid var(--rule)}
+  .kicker{font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--gold);font-weight:700;margin-bottom:22px}
+  h1{font-family:var(--serif);font-weight:600;font-size:clamp(30px,5vw,46px);line-height:1.18;letter-spacing:-.01em;max-width:20ch}
+  h1 em{font-style:italic;color:var(--blue)}
+  h1 .gold{color:var(--gold);font-style:italic}
+  .hero p{margin-top:24px;font-size:17px;color:var(--muted);max-width:62ch}
+  .hero p b{color:var(--ink)}
+
+  /* sections */
+  section{padding:60px 0;border-bottom:1px solid var(--rule)}
+  .eyebrow{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:14px}
+  h2{font-family:var(--serif);font-weight:600;font-size:clamp(22px,3.4vw,30px);line-height:1.25;max-width:26ch;margin-bottom:14px}
+  .lede{color:var(--muted);max-width:66ch}
+  .lede b{color:var(--ink)}
+
+  /* lost artifacts */
+  .relics{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:30px}
+  .relic{text-align:left;background:var(--card);border:1px solid var(--rule);border-radius:10px;padding:16px;transition:border-color .15s}
+  .relic:hover{border-color:var(--blue)}
+  .relic .rl{font-weight:700;font-size:13.5px}
+  .relic .rd{font-size:12px;color:var(--muted);margin-top:4px}
+  .relic .fate{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--rule);font-size:12px}
+  .relic .fate b{color:#A33B32}
+  .relic[aria-expanded="true"]{border-color:#D9BFC0;background:#FDF9F8}
+  .relic[aria-expanded="true"] .fate{display:block}
+  .relicnote{margin-top:16px;font-size:12.5px;color:var(--muted);font-style:italic}
+
+  /* decision record — the signature */
+  .record{margin-top:34px;background:var(--card);border:1px solid var(--rule);border-radius:14px;overflow:hidden;box-shadow:0 2px 14px rgba(10,29,56,.06)}
+  .rec-head{display:flex;align-items:center;gap:14px;padding:18px 22px;border-bottom:1px solid var(--rule);background:linear-gradient(to bottom,#FFFDF8,#fff)}
+  .seal{width:44px;height:44px;border-radius:50%;border:2px solid var(--gold);color:var(--gold);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:19px;flex:none}
+  .rec-title{font-family:var(--serif);font-size:17px;font-weight:600}
+  .rec-sub{font-family:var(--mono);font-size:10.5px;color:var(--muted);margin-top:2px}
+  .rec-status{margin-left:auto;font-size:11px;font-weight:700;letter-spacing:.08em;color:#1E7A50;background:#EAF6EF;border:1px solid #CBE7D6;border-radius:999px;padding:4px 12px}
+  .layer{border-bottom:1px solid var(--rule)}
+  .layer:last-child{border-bottom:0}
+  .layer>button{width:100%;display:flex;align-items:center;gap:12px;text-align:left;padding:15px 22px}
+  .layer>button:hover{background:#FAFBFD}
+  .lnum{font-family:var(--mono);font-size:10px;color:var(--gold);width:18px;flex:none}
+  .lname{font-weight:700;font-size:13.5px}
+  .lhint{font-size:12px;color:var(--muted);margin-left:auto;padding-right:8px}
+  .chev{color:var(--muted);transition:transform .18s;flex:none}
+  .layer[data-open="true"] .chev{transform:rotate(90deg)}
+  .lbody{display:none;padding:2px 22px 18px 52px}
+  .layer[data-open="true"] .lbody{display:block;animation:unfold .2s ease}
+  @keyframes unfold{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){.layer[data-open="true"] .lbody{animation:none}}
+  .lbody p{font-size:13.5px;max-width:64ch}
+  .lbody .quote{font-family:var(--serif);font-style:italic;font-size:15px;border-left:3px solid var(--gold);padding:2px 0 2px 14px;margin:8px 0}
+  .fieldrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  .field{font-family:var(--mono);font-size:10.5px;background:#F3F6FB;border:1px solid var(--rule);border-radius:6px;padding:4px 9px;color:#37517A}
+  .field.gd{background:var(--gold-soft);border-color:#E4D3A8;color:#7A5A10}
+  .rec-foot{padding:14px 22px;background:#FAFBFD;font-size:12px;color:var(--muted)}
+  .rec-foot b{color:var(--ink)}
+
+  /* compounding graph */
+  .graphwrap{margin-top:30px;background:var(--card);border:1px solid var(--rule);border-radius:14px;padding:20px}
+  .gtop{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:8px}
+  .advance{background:var(--ink);color:#fff;font-weight:700;font-size:13px;border-radius:9px;padding:10px 18px}
+  .advance:hover{background:#132E52}
+  .advance:disabled{background:#9AA9BF;cursor:not-allowed}
+  .qlabel{font-family:var(--serif);font-size:16px;font-style:italic}
+  .counters{margin-left:auto;display:flex;gap:22px}
+  .counter{text-align:right}
+  .counter .cv{font-family:var(--serif);font-size:22px;font-weight:600;color:var(--ink)}
+  .counter .cv.gold{color:var(--gold)}
+  .counter .cl{font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  #ggraph{width:100%;height:auto;display:block}
+  .gcap{font-size:11.5px;color:var(--muted);font-style:italic;margin-top:8px}
+
+  /* ladder */
+  .ladder{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:30px}
+  .rung{text-align:left;background:var(--card);border:1px solid var(--rule);border-radius:12px;padding:18px}
+  .rung:hover{border-color:var(--blue)}
+  .rung .stage{font-family:var(--mono);font-size:10px;color:var(--gold);letter-spacing:.14em}
+  .rung h3{font-family:var(--serif);font-size:17px;font-weight:600;margin:6px 0 6px}
+  .rung .rs{font-size:12.5px;color:var(--muted)}
+  .rung .more{display:none;margin-top:10px;padding-top:10px;border-top:1px dashed var(--rule);font-size:12.5px}
+  .rung[aria-expanded="true"]{border-color:var(--gold)}
+  .rung[aria-expanded="true"] .more{display:block}
+  .guard{margin-top:18px;font-size:13px;background:var(--gold-soft);border:1px solid #E4D3A8;border-radius:10px;padding:12px 16px;max-width:74ch}
+
+  /* why us */
+  .whys{margin-top:26px;display:grid;gap:0}
+  .why{display:flex;gap:18px;padding:16px 0;border-top:1px solid var(--rule)}
+  .why:last-child{border-bottom:1px solid var(--rule)}
+  .why .wmark{font-family:var(--serif);font-style:italic;color:var(--gold);font-size:18px;flex:none;width:24px}
+  .why p{font-size:14px;max-width:70ch}
+  .why b{color:var(--ink)}
+
+  footer{padding:34px 0 60px;font-size:12px;color:var(--muted)}
+  footer b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <div class="mast">
+    <div class="who"><i>citi</i> &nbsp;iPDLC Platform</div>
+    <div class="what">Briefing · The Context Graph</div>
+  </div>
+
+  <div class="hero">
+    <div class="kicker">Decision traces · Institutional memory · Human-in-the-loop</div>
+    <h1>Our systems record what happened.<br>iPDLC records <span class="gold">why it was allowed</span> to happen.</h1>
+    <p>Every product that ships at Citi is the sum of hundreds of judgment calls — approvals, exceptions, trade-offs made between a person and, now, an agent. Today that judgment evaporates the moment it's exercised. <b>The context graph is the layer that keeps it</b>: a permanent, replayable record of each decision, captured at the moment it is made, that turns this quarter's exceptions into next quarter's precedent.</p>
+  </div>
+
+  <section>
+    <div class="eyebrow">The problem</div>
+    <h2>Where product-development decisions die today</h2>
+    <p class="lede">The product development lifecycle runs on decisions that no system of record stores. Tap each one — this is not a data-quality problem; <b>the reasoning was never treated as data in the first place.</b></p>
+    <div class="relics">
+      <button class="relic" aria-expanded="false">
+        <div class="rl">The approval e-mail</div>
+        <div class="rd">"Approved — proceed, but watch the Reg E disclosures."</div>
+        <div class="fate"><b>Lost</b> in an inbox. The condition attached to the approval never reaches the team that inherits the product two years later.</div>
+      </button>
+      <button class="relic" aria-expanded="false">
+        <div class="rl">The exception on a call</div>
+        <div class="rd">A senior leader waives a design-permit finding on a thirty-minute call.</div>
+        <div class="fate"><b>Lost</b> when the call ends. The record shows a permit granted — not that it was an exception, who had the authority, or why it was safe.</div>
+      </button>
+      <button class="relic" aria-expanded="false">
+        <div class="rl">The rejected idea</div>
+        <div class="rd">A similar initiative was killed in 2025 over vendor lock-in.</div>
+        <div class="fate"><b>Lost</b> to turnover. Eighteen months later a new team spends a quarter rediscovering the same objection.</div>
+      </button>
+      <button class="relic" aria-expanded="false">
+        <div class="rl">The synthesis in someone's head</div>
+        <div class="rd">A reviewer weighs the market read, the risk view, and two prior deals — then decides.</div>
+        <div class="fate"><b>Lost</b> entirely. The system records the verdict as one word. The judgment that produced it was never written anywhere.</div>
+      </button>
+    </div>
+    <p class="relicnote">Enterprise systems of record — the CRMs, the trackers, the ledgers — store outcomes. None of them was built to store judgment.</p>
+  </section>
+  <section>
+    <div class="eyebrow">What iPDLC captures instead</div>
+    <h2>The anatomy of one decision, kept forever</h2>
+    <p class="lede">This is a real gate decision from a live pipeline run — the human approval of Agent Neo's product assessment for <b>Native Mobile PIL Autopay</b>. In iPDLC it is not an e-mail; it is a record with five layers. <b>Open each one.</b></p>
+
+    <div class="record" id="record">
+      <div class="rec-head">
+        <div class="seal">§</div>
+        <div>
+          <div class="rec-title">Decision Record — Requirements Gate</div>
+          <div class="rec-sub">run b0bcc68a · decided 11 Aug 2026, 15:03 · type gate_verdict</div>
+        </div>
+        <div class="rec-status">APPROVED</div>
+      </div>
+
+      <div class="layer" data-open="false">
+        <button aria-expanded="false"><span class="lnum">i</span><span class="lname">The question</span><span class="lhint">what was being decided</span><span class="chev">›</span></button>
+        <div class="lbody"><p>Should Citi proceed with the Native Mobile PIL Autopay product, on the strength of the agent-produced market, regulatory, and risk assessment?</p></div>
+      </div>
+
+      <div class="layer" data-open="false">
+        <button aria-expanded="false"><span class="lnum">ii</span><span class="lname">What was on the table</span><span class="lhint">the exact inputs, pinned at decision time</span><span class="chev">›</span></button>
+        <div class="lbody">
+          <p>Not "the latest version" — the precise artifacts the approver saw, frozen. Months later, the platform can re-render this screen exactly as it was.</p>
+          <div class="fieldrow">
+            <span class="field">report v3 · content-hashed</span>
+            <span class="field">quality jury 86/100 · pass</span>
+            <span class="field">regulatory findings: Reg E · UDAAP</span>
+            <span class="field">external risk assessment · received 14:41</span>
+            <span class="field gd">2 precedents cited (one a 2025 rejection)</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="layer" data-open="false">
+        <button aria-expanded="false"><span class="lnum">iii</span><span class="lname">The rules in force</span><span class="lhint">which versions of our standards applied</span><span class="chev">›</span></button>
+        <div class="lbody">
+          <p>Every decision is judged against standards that evolve. The record pins which versions governed — so "would this pass today?" and "what did we require then?" are both answerable.</p>
+          <div class="fieldrow">
+            <span class="field">regulatory-assessment skill v14</span>
+            <span class="field">quality rubric v6</span>
+            <span class="field">gate policy v2</span>
+            <span class="field">model build pinned</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="layer" data-open="false">
+        <button aria-expanded="false"><span class="lnum">iv</span><span class="lname">The human's judgment</span><span class="lhint">who decided, under what authority, in their own words</span><span class="chev">›</span></button>
+        <div class="lbody">
+          <p>The agent assembled the case; a named person with named authority made the call. Their words are stored verbatim — this sentence is the institutional knowledge.</p>
+          <div class="quote">"Proceed — watch the Reg E disclosures."</div>
+          <div class="fieldrow">
+            <span class="field">decided by · senior reviewer (SOEID)</span>
+            <span class="field">authority · approver, consumer lending</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="layer" data-open="false">
+        <button aria-expanded="false"><span class="lnum">v</span><span class="lname">What it becomes</span><span class="lhint">the decision as an asset</span><span class="chev">›</span></button>
+        <div class="lbody">
+          <p>On completion, the run is distilled into one memory record, linked to the things it touched — <b>Regulation E, the Autopay capability, the mobile platform</b>. The next team proposing anything near this space is shown this decision, its condition, and its outcome — automatically, before they start.</p>
+          <div class="fieldrow"><span class="field gd">searchable precedent · entitlement-scoped · traceable to a named human in four joins</span></div>
+        </div>
+      </div>
+
+      <div class="rec-foot">The same structure captures the cases that matter most: <b>exceptions</b> (approving despite a failed check — recorded as an exception, with the rule it overrode), and <b>revisions</b> (what the reviewer asked to change, and what actually changed).</div>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Why it compounds</div>
+    <h2>Every run makes the next one better-informed</h2>
+    <p class="lede">Decisions link to the durable things they touch — regulations, systems, capabilities. Shared touchpoints connect new work to old judgment, even when the ideas are worded nothing alike. <b>Advance the quarters</b> and watch precedent accumulate around the same few entities.</p>
+
+    <div class="graphwrap">
+      <div class="gtop">
+        <button class="advance" id="advanceQ">Advance one quarter</button>
+        <span class="qlabel" id="qlabel">Launch — Q3 2026</span>
+        <div class="counters">
+          <div class="counter"><div class="cv" id="cDec">1</div><div class="cl">decisions kept</div></div>
+          <div class="counter"><div class="cv gold" id="cExc">0</div><div class="cl">exceptions → precedent</div></div>
+          <div class="counter"><div class="cv" id="cCit">0</div><div class="cl">precedent citations</div></div>
+        </div>
+      </div>
+      <svg id="ggraph" viewBox="0 0 860 360" role="img" aria-label="Growing graph of decisions connected to shared entities"></svg>
+      <p class="gcap">Counts are illustrative of the mechanism, not projections. The mechanism itself is real: every gate, exception, and revision writes one record; records link to entities; retrieval surfaces them to future runs.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="eyebrow">What it earns</div>
+    <h2>Precedent buys back senior attention — deliberately</h2>
+    <p class="lede">The graph is not an archive; it is the evidence base for reducing review burden on <b>repeats</b>, one narrow class of decision at a time. Tap each stage.</p>
+    <div class="ladder">
+      <button class="rung" aria-expanded="false">
+        <div class="stage">STAGE I — TODAY</div><h3>The human decides</h3>
+        <div class="rs">Agents assemble the full case; a person reads it and makes every call. Every decision is recorded.</div>
+        <div class="more">This is where the graph starts growing — no autonomy required. Value on day one: nothing decided in iPDLC can ever again be undocumented.</div>
+      </button>
+      <button class="rung" aria-expanded="false">
+        <div class="stage">STAGE II — EARNED PER GATE CLASS</div><h3>The agent recommends</h3>
+        <div class="rs">The gate arrives pre-filled: a recommended verdict, the precedents behind it, and the agent's agreement history. The human confirms or overrides.</div>
+        <div class="more">Promotion requires evidence from the graph itself: sustained agreement between recommendation and human verdict across enough decisions. Reviews get faster; the human stays the decider.</div>
+      </button>
+      <button class="rung" aria-expanded="false">
+        <div class="stage">STAGE III — NARROW, SIGNED-OFF, REVERSIBLE</div><h3>Policy approves routine repeats</h3>
+        <div class="rs">For tightly defined low-risk classes only, with sampling, a kill switch, and model-risk sign-off. Every automatic approval writes a fuller record than a human one.</div>
+        <div class="more">One sampled disagreement demotes the class immediately. The goal is never full autonomy — it is spending senior judgment on the decisions that are genuinely new.</div>
+      </button>
+    </div>
+    <div class="guard">Guardrail, stated plainly: nothing enters institutional memory without a named human decision attached, and every remembered claim traces back to that person and their words. That sentence is the model-risk review, condensed.</div>
+  </section>
+
+  <section>
+    <div class="eyebrow">Why this is ours to build</div>
+    <h2>The capture has to happen where the decision happens</h2>
+    <div class="whys">
+      <div class="why"><span class="wmark">a</span><p><b>iPDLC is the execution path.</b> Every approval, exception, and hand-off in the lifecycle already commits through a transaction the platform controls — so the decision and its full context are captured in the same instant, never reconstructed afterwards from fragments.</p></div>
+      <div class="why"><span class="wmark">b</span><p><b>Vendor platforms record state, not judgment.</b> A tracker knows the permit was granted; it cannot know it was an exception, who had the authority, or what the approver saw. Bolting capture on after the fact recovers none of that.</p></div>
+      <div class="why"><span class="wmark">c</span><p><b>The asset compounds in-house.</b> Built inside Citi, the graph of how Citi decides — its exceptions, its precedents, its named judgment — accrues to Citi, on Citi's entitlements, inside Citi's audit perimeter. That is the difference between buying automation and building institutional memory.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    Prepared from the iPDLC architecture set — master architecture, messaging, realtime, interface, API, and <b>context graph &amp; decision layer</b> documents, plus the interactive architecture explorer. Framing after Foundation Capital, "AI's trillion-dollar opportunity: context graphs" (Gupta &amp; Garg, Dec 2025).
+  </footer>
+</div>
+
+<script>
+/* relics + record layers + ladder: simple disclosure */
+document.querySelectorAll('.relic,.rung').forEach(b=>{
+  b.addEventListener('click',()=>b.setAttribute('aria-expanded',b.getAttribute('aria-expanded')!=='true'));
+});
+document.querySelectorAll('.layer>button').forEach(b=>{
+  b.addEventListener('click',()=>{
+    const l=b.parentElement,open=l.dataset.open==='true';
+    l.dataset.open=String(!open);b.setAttribute('aria-expanded',String(!open));
+  });
+});
+
+/* compounding graph */
+const NSg='http://www.w3.org/2000/svg';
+const svg=document.getElementById('ggraph');
+const eg=(t,a)=>{const e=document.createElementNS(NSg,t);for(const k in a)e.setAttribute(k,a[k]);return e};
+const edges=eg('g',{}),nodes=eg('g',{});svg.appendChild(edges);svg.appendChild(nodes);
+const ENT=[{x:180,y:180,l:'Regulation E'},{x:430,y:110,l:'Autopay'},{x:680,y:190,l:'Mobile platform'},{x:430,y:280,l:'Instalment loans'}];
+ENT.forEach(e=>{
+  nodes.appendChild(eg('circle',{cx:e.x,cy:e.y,r:26,fill:'#F3F6FB',stroke:'#C6D3E4','stroke-width':1.5}));
+  const t=eg('text',{x:e.x,y:e.y+44,'text-anchor':'middle',style:'font:600 10.5px '+getComputedStyle(document.body).fontFamily+';fill:#5A6E8C'});
+  t.textContent=e.l;nodes.appendChild(t);
+});
+const reducedG=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const QUARTERS=[
+  {label:'Q4 2026',dec:9,exc:1,cit:4,seeds:[[0,1],[1,2],[1,3]]},
+  {label:'Q1 2027',dec:24,exc:3,cit:15,seeds:[[0,3],[1,2],[0,1],[2,3]]},
+  {label:'Q2 2027',dec:47,exc:6,cit:38,seeds:[[1,2],[0,1],[1,3],[0,2],[2,3]]},
+  {label:'Q3 2027 — one year in',dec:78,exc:11,cit:72,seeds:[[0,1],[1,2],[1,3],[0,3],[0,2],[1,2]]}
+];
+let qi=0,placed=0;
+const rand=(a,b)=>a+Math.random()*(b-a);
+function addDecision(pair,gold){
+  const A=ENT[pair[0]],B=ENT[pair[1]];
+  const t=rand(.3,.7),x=A.x+(B.x-A.x)*t+rand(-46,46),y=A.y+(B.y-A.y)*t+rand(-40,40);
+  [A,B].forEach(E=>edges.appendChild(eg('line',{x1:x,y1:y,x2:E.x,y2:E.y,stroke:gold?'#C8951F':'#D6DEEA','stroke-width':gold?1.4:1,opacity:gold?.8:.65})));
+  const c=eg('circle',{cx:x,cy:y,r:gold?5.5:4,fill:gold?'#C8951F':'#0A1D38',opacity:0});
+  nodes.appendChild(c);
+  const delay=reducedG?0:placed*55;placed++;
+  setTimeout(()=>{c.style.transition=reducedG?'none':'opacity .3s';c.setAttribute('opacity',gold?.95:.8)},delay);
+}
+function count(el,to){
+  const from=+el.textContent,steps=reducedG?1:14;let i=0;
+  const iv=setInterval(()=>{i++;el.textContent=Math.round(from+(to-from)*i/steps);if(i>=steps)clearInterval(iv)},40);
+}
+addDecision([1,3],false); // the founding record
+document.getElementById('advanceQ').addEventListener('click',e=>{
+  if(qi>=QUARTERS.length)return;
+  const q=QUARTERS[qi];placed=0;
+  const per=Math.min(14,q.dec-(qi?QUARTERS[qi-1].dec:1));
+  for(let i=0;i<per;i++)addDecision(q.seeds[i%q.seeds.length],i%5===4);
+  count(document.getElementById('cDec'),q.dec);
+  count(document.getElementById('cExc'),q.exc);
+  count(document.getElementById('cCit'),q.cit);
+  document.getElementById('qlabel').textContent=q.label;
+  qi++;
+  if(qi>=QUARTERS.length){e.target.disabled=true;e.target.textContent='Four quarters captured'}
+});
+</script>
+</body>
+</html>
