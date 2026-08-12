@@ -1,6 +1,8 @@
 # iPDLC Platform Architecture — Phased Design
 
-Target: enterprise platform, first milestone 5,000 users. Serial pipeline (Neo → Trinity → Smith → Tank → Morpheus) already working; this document defines how to harden and extend it.
+Document set: this master document plus `ipdlc-kafka-flow.md`, `ipdlc-redis-streams-flow.md`, `ipdlc-ui-architecture.md`, `ipdlc-api-specification.md`, `ipdlc-context-graph.md` (context graph + decision layer), `ipdlc-end-to-end-sequence.md` (the run lifecycle in seven stages), and the interactive `ipdlc-architecture-explorer.html`. Index: `ipdlc-README.md`.
+
+Target: enterprise platform, first milestone 5,000 users. Serial pipeline (Neo → Agent Trinity (Architecture) → Smith → Tank → Morpheus) already working; this document defines how to harden and extend it.
 
 Design principle throughout: **invariants first, features second, intelligence last.** The invariants are identity (corr_id), one write path (transactional outbox), one delivery path (SSE + Redis Streams), and auditability (everything reconstructable from Postgres).
 
@@ -10,7 +12,7 @@ Design principle throughout: **invariants first, features second, intelligence l
 
 | Phase | Scope | Exit criteria |
 |---|---|---|
-| **1 — Reliability substrate** | Outbox + relay; `shared_sessions` as single state authority; plan-driven runs (linear only); agents → pure Kafka consumers (delete uvicorn + Celery); idempotent step claims; SSE + Redis Streams (delete WebSockets + pub/sub); OTel on corr_id; DLQs; agent health registry | Kill any pod mid-run → run completes. Disconnect browser 5 min → resumes with zero missed events. Any run fully reconstructable from Postgres alone. |
+| **1 — Reliability substrate** | Outbox + relay; `shared_sessions` as single state authority; plan-driven runs (linear only); agents → pure Kafka consumers (delete uvicorn + Celery); idempotent step claims; SSE + Redis Streams (delete WebSockets + pub/sub); OTel on corr_id; DLQs; agent health registry; decision records for gate and jury verdicts (see `ipdlc-context-graph.md` Part II) | Kill any pod mid-run → run completes. Disconnect browser 5 min → resumes with zero missed events. Any run fully reconstructable from Postgres alone. |
 | **2 — Studio GA** | Single-step plans; multi-turn conversational sessions; health-aware UI; HITL as pure DB state; entitlement columns on all rows | PM runs any agent standalone; tabs grey out from registry before send; approval round-trip < 2s. |
 | **3 — Cross-team integration** | External Agent Gateway (A2A calls, never topic subscriptions); contracts + schema validation; circuit breakers, degraded modes; response caching; provenance on every external result | External agent outage degrades a run (visible caveat in report) but never hangs it. |
 | **4 — Institutional memory** | Post-run distiller; `agent_context.memory` + pgvector; retrieval-at-run-start via custom ADK MemoryService; juror calibration reports | Neo cites precedent in reports; memory rows carry human-decision provenance + entitlement scope. |
@@ -29,7 +31,7 @@ flowchart TB
   end
   subgraph DP["Data plane - Python ADK workers"]
     NEO["Neo (PM)"]
-    TRI["Trinity (NFR)"]
+    TRI["Agent Trinity (Architecture) (NFR)"]
     SMI["Smith (UI/UX)"]
     TNK["Tank (JIRA)"]
     MOR["Morpheus (Eng)"]
@@ -100,7 +102,7 @@ sequenceDiagram
   end
   NEO->>PG: BEGIN · shared_events(decision_trace) · UPDATE shared_sessions SET cursor=cursor+1 · INSERT outbox(jobs.trinity) + outbox(events.state_delta) · COMMIT
   NEO->>KF: commit consumer offset
-  Note over RL,KF: same relay path dispatches Trinity → Smith → Tank → Morpheus
+  Note over RL,KF: same relay path dispatches Agent Trinity (Architecture) → Smith → Tank → Morpheus
 ```
 
 ## 4. Sequence diagram — HITL pause and resume (mermaid)
@@ -419,6 +421,12 @@ This maps 1:1 to ADK's event model (author/role/event_type/state) — implement 
 
 ---
 
+### 6.4 Decision records (cross-reference)
+
+The decision layer — `agent_context.decision_records`, replayable lineage, exception capture, and the autonomy-graduation ladder — is specified in `ipdlc-context-graph.md` Part II, alongside the entity spine and memory tables. Gate and jury decision records are Phase 1 scope: one additional insert inside transactions this document already defines.
+
+---
+
 ## 7. Kafka topic map
 
 | Topic | Partitions | Key | Producer | Consumer group | Retention |
@@ -485,6 +493,75 @@ loop:
 
 ---
 
+### 9.1 Super-agents, sub-agents, and workers — three words, two layers
+
+The week-one question on this platform: "if Neo is a super-agent with sub-agents, how is he *a worker*?" Agent and worker are not competing descriptions of one thing — they are a container and its contents, from two different layers.
+
+**The super-agent is a logical construct — an object graph.** In the Agent Development Kit, Neo *is* his hierarchy: a root agent whose sub_agents are the Market Analyzer, Regulatory Assessor, Risk Assessor, Report Writer, and the Judge-and-Jury loop. The tree is Python objects composed in code — a library with no process, no port, and no lifecycle of its own. The same holds for Agent Trinity (Architecture), Smith, Tank, and Morpheus.
+
+**The worker is an operational construct — a process.** It is the ~50-line harness that gives a tree somewhere to run: a pod whose main() builds a Kafka consumer in the agent's group and, per job, invokes the Runner on that tree.
+
+```mermaid
+flowchart TB
+  subgraph LOGICAL["Logical layer — the ADK object graph (a library, no process)"]
+    NEO["Super-agent Neo — SequentialAgent"]
+    NEO --> IP["input_processor"]
+    NEO --> MA["market_analyzer"]
+    NEO --> RA["regulatory_assessor"]
+    NEO --> RK["risk_assessor"]
+    NEO --> RW["report_writer"]
+    NEO --> JJ["judge_and_jury<br/>ParallelAgent jurors + judge"]
+  end
+  subgraph OPS["Operational layer — the worker (a pod)"]
+    W["Kafka consumer, group neo<br/>claim → runner.run_async(neo tree) → tx → ack"]
+  end
+  W -- "one job = one full tree execution, entirely in-process" --> NEO
+```
+
+```python
+# neo/agent.py — the SUPER-AGENT: pure ADK, zero infrastructure
+market_analyzer     = LlmAgent(name="market_analyzer", ...)
+regulatory_assessor = LlmAgent(name="regulatory_assessor", tools=[external_gateway_tool], ...)
+risk_assessor       = LlmAgent(name="risk_assessor", ...)
+report_writer       = LlmAgent(name="report_writer", ...)
+judge_and_jury      = SequentialAgent(sub_agents=[ParallelAgent(sub_agents=jurors), judge])
+
+neo = SequentialAgent(name="neo",
+        sub_agents=[input_processor, market_analyzer, regulatory_assessor,
+                    risk_assessor, report_writer, judge_and_jury])
+
+# worker/main.py — the WORKER: the same harness for all five super-agents
+agent    = load_agent(os.environ["AGENT_NAME"])          # "neo" selects Neo's whole tree
+runner   = Runner(agent=agent, session_service=PgSessionService(schema=f"{name}_db"))
+consumer = KafkaConsumer(f"ipdlc.jobs.{name}", group_id=name)
+
+for msg in consumer:
+    if not claim(msg): consumer.commit(); continue        # idempotency guard
+    async for event in runner.run_async(...):             # the ENTIRE tree executes here
+        persist_event_and_outbox_tx(event)                # every sub-agent turn → a row
+    finalize_tx(...)                                      # shared_events · status · next job
+    consumer.commit()                                     # offset last, always
+```
+
+The line that resolves everything is `runner.run_async()`: the whole hierarchy executes inside that one call. Control passes between sub-agents as in-memory transfers; the jurors run as a ParallelAgent — parallel *within* the process; every sub-agent turn lands in `<agent>_db.session_events` with its `author` column naming who spoke. The hierarchy is fully preserved — logically in the tree, forensically in the data — while operationally there is exactly **one consumer, one claim, one transaction boundary, one Kafka message per super-agent step**. Sub-agents never touch Kafka, never have pods, never appear in a consumer group.
+
+Deployment follows: **five super-agents → five Kubernetes Deployments of the same worker image**, differing only in `AGENT_NAME` (which selects the tree, the consumer group, and the private schema). KEDA scales each deployment on its own group's lag; sub-agents scale by riding along, because they have no independent existence to scale.
+
+**The promotion rule** this decomposition implies: a sub-agent is right while the work shares its parent's transaction boundary, retry unit, and human gate — if Neo's step fails, the regulatory assessment re-runs with it, and nobody approves the market analysis separately. Promote a sub-agent to a super-agent (its own plan stage, topic, claim, and worker) only when it genuinely needs an independent lifecycle: its own gate, its own retry semantics, or radically different scaling. The plan-driven runs design makes that promotion a data change, not an architecture change — `["neo","trinity",…]` becomes `["neo","regulatory","trinity",…]` and the sub-agent graduates. Until it needs one of those three things, keeping it inside the super-agent is correct, and cheaper in every dimension.
+
+### 9.2 What actually happens when 5,000 people submit at once
+
+The question every review asks, answered mechanically. Premise first: **no process is ever spawned per invocation.** There is no uvicorn anywhere in the platform — the Go Control Plane Service serves all HTTP and Server-Sent Events; the agent workers are long-lived Kafka consumer processes that exist before, during, and after any burst. The per-invocation unit is an **asyncio task inside an already-running worker** — kilobytes and open connections, not a process.
+
+The burst, step by step:
+
+1. **5,000 logins** → 5,000 COIN-cookied sessions and up to 5,000 Server-Sent Events connections. This is connection concentration — the one job Go is at the edge to do; two or three pods hold it comfortably.
+2. **5,000 idea submissions** → 5,000 fast transactions (`runs` row + outbox row each, single-digit milliseconds) → 5,000 `201` responses in well under a second apiece. Every submission is **durably accepted immediately** — nothing can time out, because acceptance is a database write, not a wait for an agent.
+3. **The queue absorbs the burst.** The relay publishes 5,000 `jobs.neo` messages across the partitions. Kafka's whole purpose here is this moment: the burst becomes a backlog, not an outage.
+4. **Workers drain at the sustainable rate.** Neo's step is I/O-bound — the worker spends its time awaiting the LLM Gateway, not computing — so each worker pod runs **C concurrent Runner executions** (dozens per pod is realistic) as asyncio tasks. Coarse parallelism comes from partitions × pods (KEDA scales pods on consumer lag up to the partition count); fine parallelism comes from C within each pod. Offset discipline with in-pod concurrency: commit per partition only up to the **lowest contiguous completed** message — or keep per-partition concurrency at one and raise the partition count instead, which is operationally simpler and why provisioning partitions above day-one need is cheap insurance.
+5. **The true governor is the LLM Gateway**, by design. Token-per-minute quota, not pod count, sets the drain rate — which is correct: it is the shared, priced, rate-limited resource. Illustrative arithmetic: 12 pods × 25 concurrent = 300 in-flight Neo steps; at ~6 minutes per step the 5,000-run backlog drains in roughly 100 minutes — during which every user watches *their* run's live status over their stream, queued runs showing honestly as queued.
+6. **Failure under burst is wait time, not errors.** Kill pods mid-burst: rebalance, redeliver, claims absorb duplicates. The degradation mode of this architecture is "your run starts later," never "your submission was lost" — which is the entire argument against the request/response (uvicorn) shape, where 5,000 simultaneous requests mean timeouts, retries, and duplicated work at exactly the moment of maximum load.
+
 ## 10. Sizing at 5,000 users
 
 Assumptions: 5k registered → ~250 peak concurrent UI sessions, ~30–60 concurrent active runs, each run ≈ 30–80 LLM calls over 5–20 minutes.
@@ -509,15 +586,15 @@ Honest note: at this scale nothing above is stressed. The design earns its keep 
 - Kafka: per-consumer-group ACLs; mTLS between services; the relay is the only authorized producer on `jobs.*` / `events.*`.
 - Schema registry with compatibility checks on all cross-service topics.
 - Morpheus: GitHub App token scoped per-repo; branch protection so agent PRs can never merge without human review.
-- Cross-team calls (Phase 3): service identity, contract validation, outbound data-classification review (Trinity sends current-state architecture outside the team — get that reviewed), provenance recorded in `shared_events`.
+- Cross-team calls (Phase 3): service identity, contract validation, outbound data-classification review (Agent Trinity (Architecture) sends current-state architecture outside the team — get that reviewed), provenance recorded in `shared_events`.
 - Memory (Phase 4): entitlement filter at retrieval; retrieved content injected as delimited data, never instructions; only distill runs that carry a human decision.
 - Audit: any run reconstructable from `shared_sessions` + `shared_events` + private `session_events`; `events.audit` archived to object store for retention.
 
 ---
 
-## 11. Additional architecture views
+## 12. Additional architecture views
 
-### 11.1 System context (C4 Level 1)
+### 12.1 System context (C4 Level 1)
 
 The one-box view for architecture review boards: who and what surrounds the platform. No internals.
 
@@ -547,7 +624,7 @@ flowchart TD
   IPDLC -- "model inference" --> LLM
 ```
 
-### 11.2 Run status state machine
+### 12.2 Run status state machine
 
 The `runs.status` column, drawn. Every transition is a guarded UPDATE (`WHERE status = <from> AND version = $v`); anything not drawn here is forbidden and must fail the guard.
 
@@ -555,6 +632,10 @@ The `runs.status` column, drawn. Every transition is a guarded UPDATE (`WHERE st
 stateDiagram-v2
   [*] --> running : POST create run — plan committed with outbox job row
   running --> paused_hitl : agent raises approval gate (transactional)
+  running --> paused_external : sub-agent dispatches long-running external assessment (their own HITL)
+  paused_external --> running : external verdict received — result committed, run resumes
+  paused_external --> paused_hitl : external SLA breached — reviewer chooses wait or proceed degraded
+  paused_external --> cancelled : user cancels while parked
   paused_hitl --> running : reviewer approves — hitl_decisions row plus next job outbox row
   paused_hitl --> failed : reviewer rejects — verdict recorded
   running --> running : stage completes — cursor advances, next job dispatched
@@ -569,7 +650,7 @@ stateDiagram-v2
 
 Operationally: `running` and `paused_hitl` are the only live states (the partial index in section 6.2 covers exactly these). A run stuck in `running` with a stale `last_update_time` and no consumer lag is the signature of a lost job — the ops runbook republishes from the outbox/audit trail with `attempt + 1`.
 
-### 11.3 Data flow with trust boundaries
+### 12.3 Data flow with trust boundaries
 
 The security-review view: every place data crosses a boundary, with classification. Confirm classifications with Information Security — the flows marked confidential are the ones ICRM will ask about.
 
@@ -618,7 +699,7 @@ flowchart LR
 
 The three flows that need explicit sign-off: prompts to model endpoints (confidential product strategy leaving the app zone — the gateway's approved-endpoint allowlist is the control), the current-state architecture document sent to the Tech Risk team (outbound data review), and GitHub write access (scoped tokens, protected branches, mandatory human review on agent-generated pull requests).
 
-### 11.4 Deployment — GTD and SWD data centers
+### 12.4 Deployment — GTD and SWD data centers
 
 Assumptions marked with (confirm): the exact active-active posture, PostgreSQL replica mode, and whether KaaS is stretched or mirrored are platform-team facts that should be verified and this diagram corrected.
 

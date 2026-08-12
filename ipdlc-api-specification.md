@@ -71,7 +71,7 @@ Response `200`:
 ```
 `plan: null` selects the default full plan; an explicit plan (e.g. `["smith"]` with `parent_corr_id`) is how re-runs are expressed. Response `201`:
 ```json
-{ "schema_version": 1, "correlation_id": "b0bcc68a-...", "status": "running", "plan": ["neo","architecture","smith","tank","morpheus"] }
+{ "schema_version": 1, "correlation_id": "b0bcc68a-...", "status": "running", "plan": ["neo","trinity","smith","tank","morpheus"] }
 ```
 Errors: `422 validation_failed` (empty idea), `403 forbidden_role`, `503 agent_unavailable` **only when the first plan step's agent is down** — fail before accepting work that cannot start.
 

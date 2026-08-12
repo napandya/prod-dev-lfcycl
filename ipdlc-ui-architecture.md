@@ -168,7 +168,7 @@ interface RunSnapshot {
   schema_version: 1;
   correlation_id: string;
   run_mode: 'pipeline' | 'studio';
-  plan: StepName[];                    // ["neo","architecture","smith","tank","morpheus"]
+  plan: StepName[];                    // ["neo","trinity","smith","tank","morpheus"]
   cursor: number;
   status: 'running' | 'paused_hitl' | 'complete' | 'failed' | 'cancelled';
   steps: StepSummary[];                // roll-up per plan step incl. sub-steps

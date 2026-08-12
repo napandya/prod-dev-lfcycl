@@ -78,6 +78,7 @@
   .brieftext{color:var(--ink-soft);font-size:12.5px;max-width:88ch;margin-top:6px}
 
   /* step track */
+  #panels{position:relative;max-height:430px;overflow-y:auto;overscroll-behavior:contain}
   .panel{display:none}.panel.active{display:block}
   .track{list-style:none}
   .step{position:relative;padding:9px 12px 10px 38px;border-radius:10px}
@@ -98,6 +99,30 @@
   .step.gate .gate-actions{margin-top:8px;display:none;gap:8px}
   .step.gate.active .gate-actions{display:flex}
   .step.failed .node{border-color:var(--red);background:var(--red)}
+
+
+  /* context story */
+  #storyView{display:none;padding:4px 0}
+  .story-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media(max-width:960px){.story-grid{grid-template-columns:repeat(2,1fr)}}
+  .szone{background:#F7FAFD;border:1px dashed #C9D6E6;border-radius:12px;padding:12px;min-height:190px}
+  .szone h5{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:#7288A8;margin-bottom:9px}
+  .scard{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:8px;font-size:11.5px;opacity:0;transform:translateY(5px);transition:opacity .35s,transform .35s}
+  .scard.in{opacity:1;transform:none}
+  @media(prefers-reduced-motion:reduce){.scard,.pill{transition:none}}
+  .scard .t{font-weight:700;font-size:12px}
+  .scard .m{font-family:var(--mono);font-size:10px;color:#5A6E8C;margin-top:2px;word-break:break-word}
+  .scard.evt{border-left:3px solid var(--c-sql)}
+  .scard.dec{border:1px solid #E4C87E;background:#FFFBF0;box-shadow:0 2px 10px rgba(200,149,31,.14)}
+  .scard.dec .q{font-style:italic;color:#7A5A10;margin-top:5px;font-size:11.5px}
+  .scard.mem{border:1px solid #9DD3B8;background:#F4FBF7}
+  .scard.hotc{box-shadow:0 0 0 3px rgba(255,209,102,.4);border-color:var(--thread)}
+  .entity-pills{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .pill{font-family:var(--mono);font-size:10px;border:1px solid #C9D6E6;background:#fff;border-radius:999px;padding:3px 9px;opacity:0;transition:opacity .3s}
+  .pill.in{opacity:1}
+  .pill.hotp{border-color:var(--thread);background:#FFF6DC;box-shadow:0 0 0 3px rgba(255,209,102,.25)}
+  .retr{font-family:var(--mono);font-size:10px;color:#7A5A10;font-weight:700;margin-top:7px;display:none}
+  .retr.show{display:block}
 
   /* console */
   .console-pane{position:sticky;top:76px;align-self:start;background:var(--console);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;max-height:calc(100vh - 100px);box-shadow:0 10px 30px rgba(11,31,58,.25)}
@@ -146,6 +171,14 @@
     <div class="card mapwrap">
       <div class="eyebrow">Live system map — watch the packets</div>
       <svg id="map" viewBox="0 0 1060 640" role="img" aria-label="Live iPDLC topology with animated traces"></svg>
+      <div id="storyView">
+        <div class="story-grid">
+          <div class="szone"><h5>1 · The run</h5><div id="szRun"></div></div>
+          <div class="szone"><h5>2 · Evidence — shared_events</h5><div id="szEvt"></div></div>
+          <div class="szone"><h5>3 · Decisions</h5><div id="szDec"></div></div>
+          <div class="szone"><h5>4 · Institutional memory</h5><div id="szMem"></div></div>
+        </div>
+      </div>
     </div>
 
     <div class="card" id="panels"></div>
@@ -173,13 +206,13 @@ const NODES = {
             chips:[{id:'runs',t:'runs'},{id:'outbox',t:'outbox'},{id:'shared_events',t:'shared_events'},
                    {id:'hitl',t:'hitl_decisions'},{id:'agent_db',t:'<agent>_db.*'},{id:'memory',t:'memory·pgvector'}]},
   kafka:   {x:404, y:280, w:352, h:140, l:'Apache Kafka', s:'key = correlation_id', zone:true,
-            chips:[{id:'t_neo',t:'jobs.neo'},{id:'t_arch',t:'jobs.arch'},{id:'t_smith',t:'jobs.smith'},
+            chips:[{id:'t_neo',t:'jobs.neo'},{id:'t_arch',t:'jobs.trinity'},{id:'t_smith',t:'jobs.smith'},
                    {id:'t_tank',t:'jobs.tank'},{id:'t_morph',t:'jobs.morpheus'},{id:'t_ev',t:'events.delta'}]},
   techrisk:{x:864, y:268, w:158, h:50, l:'Tech Risk Agent', s:'external team'},
   jira:    {x:864, y:332, w:158, h:46, l:'JIRA', s:'epics · stories'},
   github:  {x:864, y:392, w:158, h:46, l:'GitHub', s:'pull requests'},
   neo:     {x:40,  y:492, w:140, h:52, l:'Agent Neo', s:'requirements'},
-  arch:    {x:196, y:492, w:150, h:52, l:'Architecture Agent', s:'design permit · NFR'},
+  arch:    {x:196, y:492, w:150, h:52, l:'Agent Trinity (Architecture)', s:'design permit · NFR'},
   smith:   {x:362, y:492, w:140, h:52, l:'Agent Smith', s:'UI/UX design'},
   tank:    {x:518, y:492, w:150, h:52, l:'Product Wizard', s:'backlog'},
   morpheus:{x:684, y:492, w:150, h:52, l:'Agent Morpheus', s:'code · PR'}
@@ -218,6 +251,7 @@ function flash(id,cls='hot',ms=900){const e=document.getElementById('node-'+id);
 function flashChip(id,ms=1100){const e=document.getElementById('chip-'+id);if(!e)return;e.classList.add('hot');setTimeout(()=>e.classList.remove('hot'),ms/speed)}
 
 function trace(from,to,color,dur){
+  if(storyMode)return Promise.resolve();
   return new Promise(res=>{
     const a=center(from),b=center(to);
     if(reduced||from===to){flash(from);flash(to);return setTimeout(res,120)}
@@ -238,7 +272,7 @@ function trace(from,to,color,dur){
 
 /* ================= run data ================= */
 const CIDGEN=()=>(crypto.randomUUID?crypto.randomUUID():'b0bcc68a-eb58-44c6-a0de-'+Math.random().toString(16).slice(2,14));
-let corr=null,speed=1,running=false,gateResolver=null;
+let corr=null,speed=1,running=false,gateResolver=null,storyMode=false;
 const short=id=>id?id.slice(0,8)+'…':'';
 const cid=()=>`<span class="cid">${short(corr)}</span>`;
 
@@ -322,6 +356,17 @@ const FLOWS={
         ops:[{c:'SQL',from:'neo',to:'pg',tables:['memory'],x:()=>`ORDER BY embedding <-> query LIMIT 3 WHERE entitlement IN (scopes)`},
              {c:'ADK',from:'neo',to:'neo',x:()=>`prompt ← "prior initiatives (reference data)" <span class="ok">precedent cited</span>`}]}
     ]},
+  story:{zone:'#C8951F',name:'Context Story',brief:'How one idea — Native Mobile PIL Autopay — becomes permanent institutional context, told in eight chapters. The map gives way to the four structures the platform actually builds: the run, its evidence, its decisions, and the memory that outlives it. You are the approver in chapter three.',
+    steps:[
+      {t:'A Product Manager submits the idea',d:'One row is born. Everything that follows — every event, decision, and memory — hangs off its correlation identifier.',run:()=>STORY.ch1()},
+      {t:'Agents turn work into evidence',d:'Neo\u2019s sub-agents commit findings as rows in shared context: the working truth of this run, readable by every later stage.',run:()=>STORY.ch2()},
+      {t:'The evidence reaches a human',d:'Neo raises the requirements gate and releases its message — the pause is a database row. Approve below to watch judgment become a record.',gate:true,run:()=>STORY.ch3()},
+      {t:'Judgment becomes a decision record',d:'The verdict, the approver\u2019s own words, the inputs on the table, and the rule versions in force — pinned, replayable, forever.',run:()=>STORY.ch4()},
+      {t:'The pipeline completes',d:'Agent Trinity (Architecture), Smith, Tank, and Morpheus add their evidence: design permit, backlog, and the pull request.',run:()=>STORY.ch5()},
+      {t:'The distiller mints institutional memory',d:'One curated record per run — decision and rationale copied from the human, never authored by a model — linked to the durable things it touched.',run:()=>STORY.ch6()},
+      {t:'Six months later, a new idea arrives',d:'\u201CCard Autopay enhancements.\u201D Worded nothing like PIL Autopay — a text search would never connect them.',run:()=>STORY.ch7()},
+      {t:'Precedent finds it anyway',d:'The shared Autopay entity bridges the two. The memory — with its Reg E warning — is injected into the new run\u2019s briefing before any work begins.',run:()=>STORY.ch8()}
+    ]},
   pipeline:{zone:'#FF9F43',name:'Full Pipeline',brief:'Idea to reviewable pull request across every layer. The human gate waits for you — approve and watch the guarded transition; reject and the run goes terminal. Every packet on the map carries the same correlation identifier.',
     steps:[
       {t:'Submit — run minted',d:'"Native Mobile PIL Autopay."',
@@ -336,8 +381,8 @@ const FLOWS={
              {c:'KAFKA',from:'relay',to:'kafka',tables:['t_ev'],x:()=>`events.state_delta published`},
              {c:'SSE',from:'cp',to:'ui',x:()=>`hitl_required → gate rendered <span class="warn">waiting…</span>`}]},
       {t:'Human gate — your call',d:'The run is a paused row in PostgreSQL. Approve or reject below.',gate:true,ops:[]},
-      {t:'Architecture Agent',d:'Reads committed findings; calls Tech Risk through the gateway with a timeout and a degraded mode.',
-        ops:[{c:'KAFKA',from:'kafka',to:'arch',tables:['t_arch'],x:()=>`consume jobs.architecture · claim <span class="ok">✓</span>`},
+      {t:'Agent Trinity (Architecture)',d:'Reads committed findings; calls Tech Risk through the gateway with a timeout and a degraded mode.',
+        ops:[{c:'KAFKA',from:'kafka',to:'arch',tables:['t_arch'],x:()=>`consume jobs.trinity · claim <span class="ok">✓</span>`},
              {c:'SQL',from:'arch',to:'pg',tables:['shared_events'],x:()=>`read Neo findings`},
              {c:'HTTP',from:'arch',to:'techrisk',x:()=>`external gateway → tech risk (30s budget) <span class="ok">target state</span>`},
              {c:'SQL',from:'arch',to:'pg',tables:['shared_events','outbox'],x:()=>`design permit + NFRs · outbox(jobs.smith)`}]},
@@ -382,6 +427,10 @@ Object.entries(FLOWS).forEach(([k,f])=>{
   panels.appendChild(p);
 });
 function select(k){current=k;briefText.textContent=FLOWS[k].brief;
+  storyMode=(k==='story');
+  document.getElementById('map').style.display=storyMode?'none':'block';
+  document.getElementById('storyView').style.display=storyMode?'block':'none';
+  document.querySelector('.mapwrap .eyebrow').textContent=storyMode?'The context graph, built live — one idea becoming institutional memory':'Live system map — watch the packets';
   tabs.querySelectorAll('button').forEach(b=>b.setAttribute('aria-current',b.dataset.key===k));
   panels.querySelectorAll('.panel').forEach(p=>p.classList.toggle('active',p.id==='panel-'+k));}
 select('pipeline');
@@ -391,11 +440,18 @@ document.querySelector('.speed').addEventListener('click',e=>{
   document.querySelectorAll('.speed button').forEach(x=>x.setAttribute('aria-pressed',x===b));});
 
 function log(chan,html){opsN++;wireCount.textContent=opsN+' ops';
+  const stick=wireEl.scrollHeight-wireEl.scrollTop-wireEl.clientHeight<70;
   const r=document.createElement('div');r.className='row';
   r.innerHTML=`<span class="chan ${chan}">${chan}</span><span>${html}</span>`;
-  wireEl.appendChild(r);wireEl.scrollTop=wireEl.scrollHeight;}
+  wireEl.appendChild(r);if(stick)wireEl.scrollTop=wireEl.scrollHeight;}
 const sysNote=t=>log('SYS',`<span class="comment">${t}</span>`);
 const sleep=ms=>new Promise(r=>setTimeout(r,ms/speed));
+const panelsBox=document.getElementById('panels');
+function keepVisible(el){
+  const pb=panelsBox.getBoundingClientRect(), eb=el.getBoundingClientRect();
+  if(eb.top<pb.top+8||eb.bottom>pb.bottom-8)
+    panelsBox.scrollTo({top:el.offsetTop-46,behavior:reduced?'auto':'smooth'});
+}
 
 async function doOp(o){
   await trace(o.from,o.to,CHANCOLOR[o.c]||'#888',700);
@@ -405,7 +461,8 @@ async function doOp(o){
 }
 
 resetBtn.onclick=()=>reset(current);
-function reset(k){FLOWS[k].steps.forEach((s,i)=>{const e=document.getElementById(`s-${k}-${i}`);
+function reset(k){if(k==='story')resetStory();
+  FLOWS[k].steps.forEach((s,i)=>{const e=document.getElementById(`s-${k}-${i}`);
   e.className='step pending '+(s.gate?'gate':'');e.style.opacity='';});runState.textContent='';}
 
 runBtn.onclick=()=>simulate(current);
@@ -423,16 +480,16 @@ async function simulate(k){
   for(let i=0;i<steps.length;i++){
     const s=steps[i],elS=document.getElementById(`s-${k}-${i}`);
     elS.classList.remove('pending');elS.classList.add('active');
-    elS.scrollIntoView({block:'nearest',behavior:'smooth'});
+    keepVisible(elS);
     runState.textContent=`Step ${i+1}/${steps.length} — ${s.t}`;
-    for(const o of s.ops)await doOp(o);
+    if(s.run){await s.run();}else{for(const o of s.ops)await doOp(o);}
     if(s.gate){
       runState.textContent='Paused at the human gate — the run is a row in PostgreSQL, waiting for you.';
       flash('ui','gatehot',999999);const uiN=document.getElementById('node-ui');
       const verdict=await new Promise(res=>{gateResolver=res});gateResolver=null;uiN.classList.remove('gatehot');
       if(verdict==='approve'){
         await doOp({c:'HTTP',from:'ui',to:'cp',x:()=>`POST /runs/${short(corr)}/approvals + X-CSRF-Token`});
-        await doOp({c:'SQL',from:'cp',to:'pg',tables:['runs','hitl','outbox'],x:()=>`guarded paused_hitl→running <span class="ok">1 row</span> · hitl_decisions(approved) · outbox(jobs.architecture) · COMMIT`});
+        await doOp({c:'SQL',from:'cp',to:'pg',tables:['runs','hitl','outbox'],x:()=>`guarded paused_hitl→running <span class="ok">1 row</span> · hitl_decisions(approved) · outbox(jobs.trinity) · COMMIT`});
         await doOp({c:'SSE',from:'cp',to:'ui',x:()=>`hitl_decided → chip flips <span class="ok">Approved</span> <span class="comment">-- never optimistic</span>`});
       }else{
         await doOp({c:'HTTP',from:'ui',to:'cp',x:()=>`POST reject + required comment`});
@@ -450,6 +507,98 @@ async function simulate(k){
   finish();
 }
 function finish(){running=false;runBtn.disabled=false;lampEl.classList.add('off')}
+
+/* ================= context story ================= */
+function resetStory(){['szRun','szEvt','szDec','szMem'].forEach(id=>document.getElementById(id).innerHTML='');}
+function addCard(zone,cls,html){
+  const d=document.createElement('div');d.className='scard '+cls;d.innerHTML=html;
+  document.getElementById(zone).appendChild(d);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>d.classList.add('in')));
+  return d;
+}
+function glow(el,ms=1600){el.classList.add(el.classList.contains('pill')?'hotp':'hotc');setTimeout(()=>el.classList.remove('hotp','hotc'),ms/speed);}
+const STORY={
+  async ch1(){
+    log('HTTP',`POST /api/v1/runs {product: "Native Mobile PIL Autopay"}`);
+    await sleep(500);
+    STORY.runCard=addCard('szRun','', `<div class="t">Native Mobile PIL Autopay</div><div class="m">run ${short(corr)} · plan neo → morpheus · status running</div>`);
+    log('SQL',`INSERT agent_context.runs RETURNING ${cid()} <span class="ok">the spine exists</span>`);
+    await sleep(500);
+  },
+  async ch2(){
+    const ev=[['Market read','autopay demand strong in PIL base','market_analyzer'],
+              ['Regulatory finding','Reg E · UDAAP / CFPB apply','regulatory_assessor'],
+              ['Risk view','operational risk moderate · fraud low','risk_assessor'],
+              ['Quality jury','score 86 / 100 · pass','judge_and_jury']];
+    for(const [tt,mm,who] of ev){
+      addCard('szEvt','evt',`<div class="t">${tt}</div><div class="m">${mm}</div>`);
+      log('SQL',`INSERT shared_events (${cid()}, ${who}) <span class="ok">✓</span>`);
+      await sleep(560);
+    }
+  },
+  async ch3(){
+    log('SQL',`UPDATE runs SET status='paused_hitl' WHERE ${cid()} · COMMIT`);
+    log('SSE',`hitl_required → the gate is yours <span class="warn">waiting…</span>`);
+    await sleep(300);
+  },
+  async ch4(){
+    STORY.decCard=addCard('szDec','dec',`<div class="t">§ Decision record — requirements gate</div>
+      <div class="m">gate_verdict · APPROVED · by rk98431 · authority approver:consumer-lending</div>
+      <div class="q">\u201CProceed — watch the Reg E disclosures.\u201D</div>
+      <div class="m">inputs pinned: report v3 · jury 86 · Reg E findings · 2 precedents<br>rules in force: regulatory skill v14 · rubric v6 · gate policy v2</div>`);
+    log('SQL',`INSERT decision_records (${cid()}, gate_verdict, inputs, policy_context) <span class="ok">judgment is now data</span>`);
+    await sleep(700);
+  },
+  async ch5(){
+    const ev=[['Design permit','Agent Trinity (Architecture) · NFR tier 2'],
+              ['Backlog','EP-101, EP-102 published to JIRA'],
+              ['Pull request','github …/pull/447 opened']];
+    for(const [tt,mm] of ev){
+      addCard('szEvt','evt',`<div class="t">${tt}</div><div class="m">${mm}</div>`);
+      log('SQL',`INSERT shared_events (${cid()}) <span class="ok">✓</span>`);
+      await sleep(520);
+    }
+    STORY.runCard.querySelector('.m').innerHTML=`run ${short(corr)} · <span style="color:#128A5C;font-weight:700">complete</span> · PR #447`;
+    log('SQL',`UPDATE runs SET status='complete' · COMMIT`);
+    await sleep(400);
+  },
+  async ch6(){
+    log('KAFKA',`events.audit → pipeline_complete → distiller claims (${short(corr)}, distill, 1)`);
+    await sleep(600);
+    STORY.memCard=addCard('szMem','mem',`<div class="t">Memory — PIL Autopay</div>
+      <div class="m">decision approved · rationale ← human: \u201Cwatch Reg E disclosures\u201D · entitlement consumer-lending · source ${short(corr)}</div>
+      <div class="entity-pills" id="pills"></div><div class="retr" id="retrBadge">↑ retrieved as precedent → injected into the new run\u2019s briefing</div>`);
+    log('SQL',`INSERT memory (source ${cid()}, authored_by human_verdict, embedding 768d)`);
+    await sleep(400);
+    for(const p of ['Regulation E','Autopay','Citi Mobile','Instalment loans']){
+      const pill=document.createElement('span');pill.className='pill';pill.textContent=p;pill.dataset.e=p;
+      document.getElementById('pills').appendChild(pill);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>pill.classList.add('in')));
+      log('SQL',`upsert entities + INSERT entity_links (${p})`);
+      await sleep(430);
+    }
+  },
+  async ch7(){
+    STORY.run2=addCard('szRun','',`<div class="t">Card Autopay enhancements</div><div class="m">new run · six months later · different team, different words</div>`);
+    log('HTTP',`POST /runs {product: "Card Autopay enhancements"}`);
+    log('SQL',`INSERT runs RETURNING <span class="cid">9c41ee02…</span>`);
+    await sleep(600);
+  },
+  async ch8(){
+    log('SQL',`retrieval: embed(intent) · entity match via aliases → <span class="cid">Autopay</span>`);
+    await sleep(500);
+    const ap=[...document.querySelectorAll('#pills .pill')].find(p=>p.dataset.e==='Autopay');
+    if(ap)glow(ap,2400);
+    await sleep(700);
+    glow(STORY.memCard,2600);glow(STORY.run2,2600);
+    log('SQL',`SELECT memory … ORDER BY embedding <-> query · entity_hit=true · entitlement ok → <span class="ok">1 precedent</span>`);
+    await sleep(600);
+    document.getElementById('retrBadge').classList.add('show');
+    log('ADK',`Neo prompt ← prior_initiatives: \u201Capproved 2026 — watch Reg E disclosures\u201D <span class="ok">the institution remembered</span>`);
+    log('SQL',`INSERT memory_feedback (cited pending)`);
+    await sleep(400);
+  }
+};
 </script>
 </body>
 </html>

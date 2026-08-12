@@ -17,7 +17,7 @@ Companion to `ipdlc-architecture.md`. This document covers everything that touch
 | Topic | Partitions | Key | Producers | Consumer groups | Retention |
 |---|---|---|---|---|---|
 | `ipdlc.jobs.neo` | 12 | correlation_id | outbox relay | `neo` | 7 days |
-| `ipdlc.jobs.architecture` | 12 | correlation_id | outbox relay | `architecture` | 7 days |
+| `ipdlc.jobs.trinity` | 12 | correlation_id | outbox relay | `trinity` | 7 days |
 | `ipdlc.jobs.smith` | 12 | correlation_id | outbox relay | `smith` | 7 days |
 | `ipdlc.jobs.tank` | 12 | correlation_id | outbox relay | `tank` | 7 days |
 | `ipdlc.jobs.morpheus` | 12 | correlation_id | outbox relay | `morpheus` | 7 days |
@@ -115,7 +115,7 @@ flowchart LR
 
   subgraph KAFKA["Apache Kafka — stretched across GTD and SWD"]
     J1["ipdlc.jobs.neo"]
-    J2["ipdlc.jobs.architecture"]
+    J2["ipdlc.jobs.trinity"]
     J3["ipdlc.jobs.smith"]
     J4["ipdlc.jobs.tank"]
     J5["ipdlc.jobs.morpheus"]
@@ -125,7 +125,7 @@ flowchart LR
   end
 
   W1["Neo workers<br/>consumer group neo — both DCs"]
-  W2["Architecture workers<br/>group architecture"]
+  W2["Architecture workers<br/>group trinity"]
   W3["Smith workers<br/>group smith"]
   W4["Tank workers<br/>group tank"]
   W5["Morpheus workers<br/>group morpheus"]
@@ -182,13 +182,13 @@ Topic: ipdlc.events.state_delta   Key: b0bcc68a-...
 
 Both `gateway-gtd` and `gateway-swd` consume it; each appends to its local Redis stream (see the Redis document).
 
-**Step 4 — Human gate.** Judge & Jury passes; Neo's final transaction sets `status = 'paused_hitl'`, writes the report to `shared_events`, emits a `state_delta` with `"event_type": "hitl_required"`, and commits its Kafka offset. **No `jobs.architecture` message exists yet** — that is the point.
+**Step 4 — Human gate.** Judge & Jury passes; Neo's final transaction sets `status = 'paused_hitl'`, writes the report to `shared_events`, emits a `state_delta` with `"event_type": "hitl_required"`, and commits its Kafka offset. **No `jobs.trinity` message exists yet** — that is the point.
 
 **Step 5 — Approval.** The reviewer clicks Approve (03:03 PM in the screenshot). Gateway transaction: guarded update `paused_hitl → running`, insert `hitl_decisions` row, insert outbox rows. Relay publishes `events.state_delta` (approval) and:
 
 ```json
-Topic: ipdlc.jobs.architecture   Key: b0bcc68a-...
-{ "correlation_id": "b0bcc68a-...", "step_name": "architecture", "attempt": 1,
+Topic: ipdlc.jobs.trinity   Key: b0bcc68a-...
+{ "correlation_id": "b0bcc68a-...", "step_name": "trinity", "attempt": 1,
   "context_pointer": "shared_events WHERE correlation_id = ... AND agent_name = 'neo'" }
 ```
 
@@ -264,3 +264,56 @@ That crash window is the whole at-least-once story in one picture: a re-publish 
 ### 10.4 Operational facts
 
 Size: ~200 lines of Go; throughput ceiling thousands of messages per second — three orders of magnitude above need, so it never becomes the bottleneck. The two numbers to watch: **unpublished depth** (rows waiting — a growing depth means Kafka is unreachable or the leader is down; the backlog drains on recovery with no loss) and **publish lag** (row created_at → published_at, normally under one poll interval). Alternative implementation: Debezium change-data-capture on the outbox table replaces the poller if the Kafka platform team operates Connect — same semantics, someone else's process; take it only if they run it for you.
+
+---
+
+## 11. External agent federation — async, cross-cluster, their HITL and ours
+
+The concrete case: an external team owns the risk and regulatory assessment agents, runs them on **its own Kafka event bus**, and their pipeline includes **their own human-in-the-loop review** — so a response takes hours or days, then their final output comes back to our sub-agent.
+
+### 11.1 Why this cannot be a call
+
+A synchronous or deadline-bounded request is wrong by construction here: nothing on our side may hold a Kafka message, a consumer slot, or a live Runner execution while another organization's reviewers deliberate. The platform already has the answer to unbounded human latency — our own gates: **the pause is a row, never a held message**. The external assessment gets the identical treatment, parked as state and resumed by an event. Two hard rules stay intact: our agents never touch their cluster, and their code never touches ours — one bridge owns the boundary in both directions.
+
+### 11.2 The pattern — park and resume across two buses
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant NEO as Agent Neo (regulatory sub-agent step)
+  participant PG as PostgreSQL
+  participant KFO as Our Kafka
+  participant BR as External Agent Gateway (bridge)
+  participant KFT as Their Kafka
+  participant EXT as Their risk / regulatory agents (their HITL)
+
+  NEO->>PG: tx — request payload → shared_events · status = paused_external · outbox(external.requests.regulatory)
+  NEO->>KFO: ack our job — nothing is held while they deliberate
+  KFO->>BR: deliver external.requests.regulatory
+  BR->>KFT: produce to their request topic — corr_id + reply-to in headers, schema validated
+  EXT->>EXT: their pipeline runs — their own human gate, hours or days
+  EXT->>KFT: final output + their case reference + verdict summary
+  KFT->>BR: deliver reply
+  BR->>PG: claim (corr, regulatory_reply, 1) · tx — result + provenance → shared_events · decision_records(external_verdict) · status = running · outbox(jobs.neo resume)
+  KFO->>NEO: resume job — the ADK session reloads and the tree continues past the regulatory step
+  Note over BR,PG: overdue SLA → the bridge raises OUR gate — a reviewer chooses: keep waiting, or proceed degraded
+```
+
+Message 1 is Neo's regulatory sub-agent reaching the point where it needs the external assessment: it commits the outbound request payload to shared context, parks the run as `paused_external`, and drops the request onto the outbox — one transaction, then the Kafka job is acknowledged. The worker is free; the run is a row. Message 8 is the mirror image days later: the bridge, an idempotent consumer like every other (claim on `(corr_id, regulatory_reply, attempt)`), commits their result with full provenance and dispatches a **resume job**. The Neo worker that picks it up claims phase two, reloads the ADK session from `neo_db.sessions` — this is precisely what the persistent SessionService exists for — and the agent tree continues from the step after the external call, with the result injected as a tool response.
+
+### 11.3 The bridge — the only thing that spans both clusters
+
+The External Agent Gateway grows Kafka legs and becomes the single sanctioned point of cross-cluster contact: it consumes our `external.requests.*` topics and produces to their request topic; it consumes their reply topic and writes into our world through the standard transactional path. It owns the cross-cluster credentials (service identity, mutual TLS to their brokers), validates both directions against the **versioned contract schema**, translates identifiers, and enforces the rule that neither side's agents ever subscribe to the other side's bus — the coupling disease this document banned in section 6 stays banned; the bridge is the one audited exception, with a contract.
+
+### 11.4 The reply contract — what their message must carry
+
+Agreed as a versioned schema (registry-governed on whichever bus hosts it): our `correlation_id` echoed verbatim (the resume key) · **their case reference** (their audit world's key — stored in provenance so a cross-team audit can walk both trails) · the structured assessment output · **their verdict summary**: outcome, their reviewer's rationale, decision timestamp, and a reference to their approval record. That last part matters for the context graph: their human decision is *their* decision record, living in *their* system — we do not copy their reviewer's identity into our rows; we record an `external_verdict` decision record capturing the outcome, their rationale text, and their case reference. The institutional memory then correctly remembers "regulatory ruled X, their case REG-2026-0441" — precedent with a pointer, not a duplicated dossier.
+
+### 11.5 Time, and what happens when they are slow
+
+`paused_external` is not open-ended. The bridge tracks `requested_at` per parked run against the contracted SLA: at the warning threshold it alerts; at breach it does the honest thing — **raises our own HITL gate** ("external regulatory assessment overdue — keep waiting, or proceed with a degraded report?"), because whether to proceed without their input is a human judgment, and it becomes a `gate_verdict` (or `exception_override`) record like any other. A **late reply after a degraded proceed** is not discarded: the bridge commits it as a supplementary `shared_events` row and notifies — the run moved on, but the record is complete. Duplicate replies are no-ops via the claim. And the run state machine gains one state: `running → paused_external → running` on reply, `→ paused_hitl` on SLA breach, `→ cancelled` if the user cancels while parked (the bridge sends their side a courtesy cancellation event; whether they honor it is their affair — ours is simply to stop waiting).
+
+### 11.6 What this does to Neo's shape
+
+Nothing structural — and that is the point. The regulatory sub-agent stays a sub-agent; the pause happens *inside* Neo's step exactly as a long tool call would, except the tool call is event-shaped. If the external assessment ever needs its own gate **on our side** or independent re-runs, the section 9.1 promotion rule applies unchanged and it becomes a plan stage fronted by the same bridge. Until then: park, resume, one bridge, two sovereign buses, and every hour of their deliberation costs our platform nothing but a row.
+
